@@ -1,0 +1,16 @@
+[
+  {
+    "id": "demo_001",
+    "name": "Studio Noir Architecture",
+    "brand": "Studio Noir",
+    "destinationUrl": "https://example.com/studio-noir",
+    "imageAsset": "assets/campaigns/demo_ad.jpg",
+    "actions": [
+      {
+        "type": "view",
+        "label": "VIEW",
+        "destination": "https://example.com/studio-noir"
+      }
+    ]
+  }
+]
