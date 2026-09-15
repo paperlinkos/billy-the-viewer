@@ -12,5 +12,19 @@
         "destination": "https://example.com/studio-noir"
       }
     ]
+  },
+  {
+    "id": "demo_002",
+    "name": "Aurora Billy Vision",
+    "brand": "Aurora Optics",
+    "destinationUrl": "https://example.com/aurora-vision",
+    "imageAsset": "assets/campaigns/demo_ad_2.jpg",
+    "actions": [
+      {
+        "type": "view",
+        "label": "VIEW",
+        "destination": "https://example.com/aurora-vision"
+      }
+    ]
   }
 ]

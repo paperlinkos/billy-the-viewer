@@ -2,7 +2,10 @@ import 'dart:convert';
 import 'package:flutter/services.dart';
 import 'ad_action.dart';
 
+import 'ad_medium_context.dart';
+
 export 'ad_action.dart';
+export 'ad_medium_context.dart';
 
 /// Represents a registered advertisement target within Billy's visual discovery registry.
 ///
@@ -14,6 +17,10 @@ class AdTarget {
   final String destinationUrl;
   final String imageAsset;
   final List<AdAction> actions;
+
+  // Medium and physical location context
+  final AdMediumType mediumType;
+  final GeoLocation? location;
 
   // Future reward compatibility architecture (NOT displayed or processed in Phase 4)
   final bool hasReward;
@@ -32,6 +39,8 @@ class AdTarget {
     required this.destinationUrl,
     required this.imageAsset,
     this.actions = const [],
+    this.mediumType = AdMediumType.universal,
+    this.location,
     this.hasReward = false,
     this.rewardType,
     this.rewardAmount,
@@ -64,6 +73,8 @@ class AdTarget {
       destinationUrl: destinationUrl,
       imageAsset: imageAsset,
       actions: actions,
+      mediumType: mediumType,
+      location: location,
       hasReward: hasReward,
       rewardType: rewardType,
       rewardAmount: rewardAmount,
@@ -91,6 +102,19 @@ class AdTarget {
       ];
     }
 
+    AdMediumType parsedMedium = AdMediumType.universal;
+    if (json['mediumType'] is String) {
+      parsedMedium = AdMediumType.values.firstWhere(
+        (m) => m.name == json['mediumType'],
+        orElse: () => AdMediumType.universal,
+      );
+    }
+
+    GeoLocation? parsedLocation;
+    if (json['location'] is Map<String, dynamic>) {
+      parsedLocation = GeoLocation.fromJson(json['location'] as Map<String, dynamic>);
+    }
+
     return AdTarget(
       id: json['id'] as String,
       name: json['name'] as String,
@@ -98,6 +122,8 @@ class AdTarget {
       destinationUrl: destUrl,
       imageAsset: json['imageAsset'] as String,
       actions: parsedActions,
+      mediumType: parsedMedium,
+      location: parsedLocation,
       hasReward: json['hasReward'] as bool? ?? false,
       rewardType: json['rewardType'] as String?,
       rewardAmount: json['rewardAmount'] as num?,
@@ -114,6 +140,8 @@ class AdTarget {
       'destinationUrl': destinationUrl,
       'imageAsset': imageAsset,
       'actions': actions.map((a) => a.toJson()).toList(),
+      'mediumType': mediumType.name,
+      if (location != null) 'location': location!.toJson(),
       if (hasReward) 'hasReward': hasReward,
       if (rewardType != null) 'rewardType': rewardType,
       if (rewardAmount != null) 'rewardAmount': rewardAmount,

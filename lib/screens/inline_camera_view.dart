@@ -28,6 +28,7 @@ class InlineCameraView extends StatelessWidget {
   final MatchResult? confirmedMatch;
   final double liveSimilarity;
   final double threshold;
+  final String? contextBadge;
   final VoidCallback onClose;
   final VoidCallback onRetry;
   final VoidCallback onScanAgain;
@@ -40,6 +41,7 @@ class InlineCameraView extends StatelessWidget {
     this.confirmedMatch,
     this.liveSimilarity = 0.0,
     this.threshold = 0.70,
+    this.contextBadge,
     required this.onClose,
     required this.onRetry,
     required this.onScanAgain,
@@ -58,9 +60,37 @@ class InlineCameraView extends StatelessWidget {
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            const Text(
-              'BILLY',
-              style: BillyTheme.brandHeader,
+            Row(
+              children: [
+                const Text(
+                  'BILLY',
+                  style: BillyTheme.brandHeader,
+                ),
+                if (contextBadge != null && contextBadge!.isNotEmpty) ...[
+                  const SizedBox(width: BillyTheme.space12),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: BillyTheme.space8,
+                      vertical: 3.0,
+                    ),
+                    decoration: BoxDecoration(
+                      border: Border.all(
+                        color: BillyTheme.border,
+                        width: BillyTheme.borderWidthThin,
+                      ),
+                    ),
+                    child: Text(
+                      contextBadge!,
+                      style: const TextStyle(
+                        fontSize: 9.0,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 1.5,
+                        color: BillyTheme.black,
+                      ),
+                    ),
+                  ),
+                ],
+              ],
             ),
             Semantics(
               button: true,
@@ -285,9 +315,11 @@ class InlineCameraView extends StatelessWidget {
             const SizedBox(height: BillyTheme.space16),
           ],
 
-          const Text(
-            'SHOW BILLY SOMETHING',
-            style: TextStyle(
+          Text(
+            recognitionState == RecognitionState.confirming
+                ? 'POSSIBLE MATCH DETECTED'
+                : 'SHOW BILLY SOMETHING',
+            style: const TextStyle(
               fontSize: 16.0,
               fontWeight: FontWeight.w900,
               letterSpacing: 0.5,
@@ -295,8 +327,10 @@ class InlineCameraView extends StatelessWidget {
             ),
           ),
           const SizedBox(height: BillyTheme.space4),
-          const Text(
-            'POINT AT AN AD',
+          Text(
+            recognitionState == RecognitionState.confirming
+                ? 'VERIFYING DETAILS...'
+                : 'POINT AT AN AD',
             style: BillyTheme.bodySubhead,
           ),
 

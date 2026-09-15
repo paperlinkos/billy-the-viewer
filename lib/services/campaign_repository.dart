@@ -5,6 +5,8 @@ import '../models/campaign.dart';
 import '../models/recognition_signature.dart';
 import 'signature_service.dart';
 
+import 'context_engine.dart';
+
 /// In-memory repository managing campaigns for the current session.
 /// The single source of truth for campaign lifecycle state.
 /// Ensures that Billy's matching engine ONLY receives currently active campaigns.
@@ -46,20 +48,44 @@ class CampaignRepository {
   /// Alias getter for active ad targets.
   List<AdTarget> get activeAdTargets => getActiveAdTargets();
 
+  /// Geo-prefilter query: returns [AdTarget] representations filtered and prioritized
+  /// by location geofence and contextual signals BEFORE matching engine execution.
+  List<AdTarget> getActiveAdTargetsFiltered({
+    required SensorContext context,
+    ContextEngine contextEngine = const ContextEngine(),
+  }) {
+    final active = getActiveAdTargets();
+    return contextEngine.filterAndRankCandidates(
+      allTargets: active,
+      context: context,
+    );
+  }
+
+  /// Returns active campaigns physically situated within range of [userLat, userLng].
+  List<Campaign> getActiveCampaignsNear({
+    required double userLat,
+    required double userLng,
+  }) {
+    return getActiveCampaigns().where((c) {
+      if (c.location == null) return false;
+      return c.location!.isWithinRange(userLat, userLng);
+    }).toList();
+  }
+
   /// Initializes the repository with the baseline STUDIO NOIR demo campaign.
   Future<void> initialize({SignatureService? signatureService}) async {
     if (_isInitialized) return;
 
     final service = signatureService ?? SignatureService();
 
-    // Baseline STUDIO NOIR demo campaign
+    // Baseline STUDIO NOIR demo campaign (AD A)
     try {
       final ByteData data = await rootBundle.load('assets/campaigns/demo_ad.jpg');
       final Uint8List bytes = data.buffer.asUint8List();
       final signature = await service.generateSignature(bytes);
 
       final studioNoir = Campaign(
-        id: 'campaign-studio-noir-001',
+        id: systemDemoCampaignId,
         ownerAccountId: 'system-demo-owner',
         adName: 'STUDIO NOIR',
         brandName: 'Studio Noir',
@@ -72,13 +98,47 @@ class CampaignRepository {
         signatureVersion: signature.version,
       );
 
-      _campaigns.clear();
+      _campaigns.removeWhere((c) => c.id == systemDemoCampaignId);
       _campaigns.add(studioNoir);
       _isInitialized = true;
       debugPrint('CampaignRepository: Initialized with STUDIO NOIR demo campaign.');
     } catch (e) {
       debugPrint('CampaignRepository: Could not load demo campaign creative: $e');
       _isInitialized = true;
+    }
+  }
+
+  static const String secondDemoCampaignId = 'campaign-aurora-vision-002';
+
+  /// Registers the second baseline demo campaign (AD B: AURORA VISION)
+  /// through the exact same SignatureService and Campaign storage pipeline.
+  Future<Campaign?> registerSecondDemoCampaign({SignatureService? signatureService}) async {
+    final service = signatureService ?? SignatureService();
+    try {
+      final ByteData data = await rootBundle.load('assets/campaigns/demo_ad_2.jpg');
+      final Uint8List bytes = data.buffer.asUint8List();
+      final signature = await service.generateSignature(bytes);
+
+      final auroraVision = Campaign(
+        id: secondDemoCampaignId,
+        ownerAccountId: 'system-demo-owner',
+        adName: 'AURORA VISION',
+        brandName: 'Aurora Optics',
+        destinationUrl: 'https://aurora.example.com',
+        creativeAsset: 'assets/campaigns/demo_ad_2.jpg',
+        creativeBytes: bytes,
+        status: CampaignStatus.active,
+        createdAt: DateTime(2026, 1, 2),
+        recognitionSignature: signature,
+        signatureVersion: signature.version,
+      );
+
+      addCampaign(auroraVision);
+      debugPrint('CampaignRepository: Registered AURORA VISION demo campaign.');
+      return auroraVision;
+    } catch (e) {
+      debugPrint('CampaignRepository: Could not load second demo campaign creative: $e');
+      return null;
     }
   }
 

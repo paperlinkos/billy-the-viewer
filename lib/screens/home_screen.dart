@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -10,16 +12,21 @@ import 'package:billy_the_viewer/screens/rewards_screen.dart';
 import 'package:billy_the_viewer/services/account_session.dart';
 import 'package:billy_the_viewer/services/camera_service.dart';
 import 'package:billy_the_viewer/services/campaign_repository.dart';
+import 'package:billy_the_viewer/services/context_engine.dart';
 import 'package:billy_the_viewer/services/matching_engine.dart';
+import 'package:billy_the_viewer/services/verification_coordinator.dart';
 import 'package:billy_the_viewer/services/vision_service.dart';
 import 'package:billy_the_viewer/widgets/billy_button.dart';
 
-/// Phase 4 HomeScreen:
-/// Connects CameraService → VisionService → MatchingEngine → AdTarget → Discovery Result UI.
+/// Phase 4/11 HomeScreen:
+/// Connects CameraService → VisionService → ContextEngine → MatchingEngine → VerificationCoordinator → Discovery Result UI.
 class HomeScreen extends StatefulWidget {
   final CameraService? cameraService;
   final VisionService? visionService;
   final MatchingEngine? matchingEngine;
+  final ContextEngine? contextEngine;
+  final VerificationCoordinator? verificationCoordinator;
+  final SensorContext? initialSensorContext;
   final List<AdTarget>? initialCampaigns;
   final AccountSession? accountSession;
 
@@ -28,6 +35,9 @@ class HomeScreen extends StatefulWidget {
     this.cameraService,
     this.visionService,
     this.matchingEngine,
+    this.contextEngine,
+    this.verificationCoordinator,
+    this.initialSensorContext,
     this.initialCampaigns,
     this.accountSession,
   });
@@ -41,6 +51,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   late final VisionService _visionService;
   late final MatchingEngine _matchingEngine;
   late final AccountSession _accountSession;
+  late final ContextEngine _contextEngine;
+  late final VerificationCoordinator _verificationCoordinator;
+
+  SensorContext _sensorContext = const SensorContext();
+  ContextClassification? _currentClassification;
 
   bool _isCameraActive = false;
   RecognitionState _recognitionState = RecognitionState.looking;
@@ -55,14 +70,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   double _liveSimilarity = 0.0;
 
   // Rolling confidence window for movement-resilient match confirmation
-  static const int _rollingWindowSize = 6;
-  static const int _requiredConfidenceHits = 2;
+  static const int _rollingWindowSize = 8;
   final List<MatchResult?> _recentFrameMatches = [];
 
-  // Threshold based on empirical separation benchmark:
-  // Negatives score <= 0.18 or fail quality checks; positive ad scores >= 0.95.
-  static const double _perceptualThreshold = 0.70;
-  static const Duration _frameThrottleDuration = Duration(milliseconds: 500);
+  // Threshold optimized for handheld movement separation:
+  // True ads score 0.88-0.96; unrelated scenes score <= 0.18.
+  static const double _perceptualThreshold = 0.60;
+  // High-rate frame inspection: 120ms (~8 FPS) catches sharp moments between hand shakes
+  static const Duration _frameThrottleDuration = Duration(milliseconds: 120);
 
   @override
   void initState() {
@@ -72,6 +87,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     _visionService = widget.visionService ?? VisionService();
     _matchingEngine = widget.matchingEngine ?? const MatchingEngine(threshold: _perceptualThreshold);
     _accountSession = widget.accountSession ?? AccountSession();
+    _contextEngine = widget.contextEngine ?? const ContextEngine();
+    _verificationCoordinator = widget.verificationCoordinator ?? VerificationCoordinator();
+    _sensorContext = widget.initialSensorContext ?? const SensorContext();
 
     _initServices();
   }
@@ -103,6 +121,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       setState(() {
         _campaigns = embeddedCampaigns;
         _campaignsReady = true;
+        _currentClassification = _contextEngine.classify(
+          context: _sensorContext,
+          registeredTargets: _campaigns,
+        );
       });
     }
 
@@ -206,7 +228,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       return;
     }
 
-    // Throttle
+    // Throttle: 120ms (~8 FPS) allows capturing sharp frames during handheld movement
     final now = DateTime.now();
     if (now.difference(_lastProcessedTime) < _frameThrottleDuration) {
       return;
@@ -218,9 +240,42 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     try {
       final embedding = await _visionService.generateEmbeddingFromCameraImage(image);
 
+      // Fast optical ambient & contrast estimation from camera luminance plane
+      if (image.planes.isNotEmpty) {
+        final bytes = image.planes[0].bytes;
+        if (bytes.isNotEmpty) {
+          double lumSum = 0.0;
+          final step = math.max(1, bytes.length ~/ 128);
+          int count = 0;
+          for (int i = 0; i < bytes.length; i += step) {
+            lumSum += bytes[i];
+            count++;
+          }
+          final avgLum = count > 0 ? (lumSum / count) / 255.0 : 0.5;
+
+          _sensorContext = SensorContext(
+            devicePitchDegrees: _sensorContext.devicePitchDegrees,
+            ambientLuminance: avgLum,
+            contrastRatio: _sensorContext.contrastRatio,
+            userLatitude: _sensorContext.userLatitude,
+            userLongitude: _sensorContext.userLongitude,
+          );
+        }
+      }
+
+      // Context-aware candidate filtering and ranking
+      final candidateTargets = _contextEngine.filterAndRankCandidates(
+        allTargets: _campaigns,
+        context: _sensorContext,
+      );
+      _currentClassification = _contextEngine.classify(
+        context: _sensorContext,
+        registeredTargets: _campaigns,
+      );
+
       if (embedding.isNotEmpty) {
         double bestSim = 0.0;
-        for (final c in _campaigns) {
+        for (final c in candidateTargets) {
           if (c.embedding.isNotEmpty) {
             final sim = MatchingEngine.maxSimilarityAcrossRotations(c.embedding, embedding);
             if (sim > bestSim) bestSim = sim;
@@ -233,9 +288,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           });
         }
 
-        final match = _matchingEngine.findBestMatch(embedding, _campaigns);
+        final match = _matchingEngine.findBestMatch(embedding, candidateTargets);
         _recordFrameMatch(match);
-        _evaluateConfidenceWindow();
+        _evaluateConfidenceWindow(image, candidateTargets);
       } else {
         // Frame failed quality checks (too dark, overexposed, or uniform scene/wall)
         _recordFrameMatch(null);
@@ -244,7 +299,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             _liveSimilarity = 0.0;
           });
         }
-        _evaluateConfidenceWindow();
+        _evaluateConfidenceWindow(image, candidateTargets);
       }
     } catch (e) {
       debugPrint('HomeScreen: Error processing camera frame: $e');
@@ -260,17 +315,17 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
   }
 
-  void _evaluateConfidenceWindow() {
+  void _evaluateConfidenceWindow(CameraImage image, List<AdTarget> candidatePool) {
     MatchResult? confirmed;
     String? bestCandidateTargetId;
     int maxHits = 0;
 
     // Evaluate candidate target hit frequency across recent frames in the window
-    final candidates = _recentFrameMatches.whereType<MatchResult>();
+    final candidates = _recentFrameMatches.whereType<MatchResult>().toList();
     for (final m in candidates) {
       final targetId = m.target.id;
-      final hits = _recentFrameMatches
-          .where((item) => item != null && item.target.id == targetId)
+      final hits = candidates
+          .where((item) => item.target.id == targetId)
           .toList();
 
       if (hits.length > maxHits) {
@@ -278,12 +333,48 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         bestCandidateTargetId = targetId;
       }
 
-      // Require sufficient confidence hits across the rolling window (e.g. 2+ hits)
-      // while strictly preventing any single random high-similarity frame from triggering
-      if (hits.length >= _requiredConfidenceHits) {
-        hits.sort((a, b) => b!.similarity.compareTo(a!.similarity));
+      hits.sort((a, b) => b.similarity.compareTo(a.similarity));
+      final highestSim = hits.first.similarity;
+
+      // Dynamic Two-Tier Movement & Shake Resilient Confirmation:
+      // Tier 1 Crisp Hit: any single frame with similarity >= 0.84 confirms immediately on-device!
+      //                   No cloud/Gemini call needed.
+      final isCrispHit = highestSim >= 0.84;
+
+      // Tier 2 Dual / Motion Hit:
+      // - Dual Hit: >= 2 hits with similarity >= 0.65 within rolling window.
+      // - Sustained Motion Hit: >= 3 hits with similarity >= 0.58 within rolling window.
+      final isDualHit = hits.length >= 2 && highestSim >= 0.65;
+      final isSustainedMotionHit = hits.length >= 3 && hits.every((h) => h.similarity >= 0.58);
+
+      if (isCrispHit) {
         confirmed = hits.first;
         break;
+      } else if (isDualHit || isSustainedMotionHit) {
+        final candidateTarget = hits.first.target;
+
+        // In-session cache check (10s TTL):
+        if (_verificationCoordinator.isRecentlyConfirmed(candidateTarget.id)) {
+          confirmed = hits.first;
+          break;
+        }
+
+        // Show optimistic "possible match" / verifying state without freezing the camera stream
+        if (mounted && _recognitionState != RecognitionState.confirming) {
+          setState(() {
+            _recognitionState = RecognitionState.confirming;
+          });
+        }
+
+        // Trigger ONE async Gemini verification call (single-flight enforced inside coordinator)
+        if (!_verificationCoordinator.isInFlight) {
+          final frameJpeg = VisionService.convertCameraImageToJpeg(image);
+          _triggerAsyncGeminiVerification(
+            candidate: candidateTarget,
+            frameJpeg: frameJpeg,
+            candidatePool: candidatePool,
+          );
+        }
       }
     }
 
@@ -310,7 +401,39 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         });
       }
     } else {
-      if (mounted && _recognitionState == RecognitionState.confirming) {
+      if (mounted && _recognitionState == RecognitionState.confirming && !_verificationCoordinator.isInFlight) {
+        setState(() {
+          _recognitionState = RecognitionState.looking;
+        });
+      }
+    }
+  }
+
+  void _triggerAsyncGeminiVerification({
+    required AdTarget candidate,
+    required Uint8List frameJpeg,
+    required List<AdTarget> candidatePool,
+  }) async {
+    final result = await _verificationCoordinator.verifyCandidate(
+      candidate: candidate,
+      frameJpegBytes: frameJpeg,
+      candidatePool: candidatePool,
+    );
+
+    if (!mounted || !_isCameraActive || _recognitionState == RecognitionState.recognized) {
+      return;
+    }
+
+    if (result != null) {
+      debugPrint('Billy Recognition: GEMINI ASYNC VERIFIED → ${result.target.name}');
+      setState(() {
+        _recognitionState = RecognitionState.recognized;
+        _confirmedMatch = result;
+      });
+      _cameraService.stopImageStream();
+    } else {
+      debugPrint('Billy Recognition: Gemini verification returned negative or failed.');
+      if (_recognitionState == RecognitionState.confirming) {
         setState(() {
           _recognitionState = RecognitionState.looking;
         });
@@ -320,6 +443,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   void _openCamera() {
     _syncCampaigns();
+    _currentClassification = _contextEngine.classify(
+      context: _sensorContext,
+      registeredTargets: _campaigns,
+    );
     setState(() {
       _isCameraActive = true;
       _recognitionState = RecognitionState.looking;
@@ -416,6 +543,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     confirmedMatch: _confirmedMatch,
                     liveSimilarity: _liveSimilarity,
                     threshold: _matchingEngine.threshold,
+                    contextBadge: (_currentClassification != null &&
+                            _currentClassification!.predictedMedium !=
+                                AdMediumType.universal)
+                        ? _currentClassification!.predictedMedium.iconLabel
+                        : null,
                     onClose: _closeCamera,
                     onRetry: _initializeCamera,
                     onScanAgain: _scanAgain,

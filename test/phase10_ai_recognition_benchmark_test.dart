@@ -331,16 +331,16 @@ void main() {
     });
   });
 
-  group('Phase 10: 6. Regression — Production Pipeline Untouched', () {
-    test('GeminiEmbeddingService is in experimental/ namespace, not lib/services/', () {
-      // Verify the file exists in the experimental/ namespace
+  group('Phase 10: 6. Regression — Service Architecture', () {
+    test('GeminiEmbeddingService is in lib/services/ with forwarding export in lib/experimental/', () {
+      // Verify the forwarding export exists in the experimental/ namespace
       const servicePath = 'lib/experimental/gemini_embedding_service.dart';
       expect(File(servicePath).existsSync(), isTrue);
 
-      // Verify it is NOT in the production services directory
+      // Verify it is in the services directory
       const productionPath = 'lib/services/gemini_embedding_service.dart';
-      expect(File(productionPath).existsSync(), isFalse,
-          reason: 'AI embedding service must remain in experimental/ only');
+      expect(File(productionPath).existsSync(), isTrue,
+          reason: 'Gemini embedding service is promoted to services directory');
     });
 
     test('HomeScreen source does not import gemini_embedding_service', () {

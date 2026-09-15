@@ -311,6 +311,36 @@ class VisionService {
     return v.map((e) => e / length).toList();
   }
 
+  /// Converts a [CameraImage] into compressed JPEG bytes for async verification.
+  /// Downsamples the central square region to [targetSize]x[targetSize] grayscale.
+  static Uint8List convertCameraImageToJpeg(CameraImage image, {int targetSize = 256}) {
+    if (image.planes.isEmpty) return Uint8List(0);
+    final width = image.width;
+    final height = image.height;
+    final yPlane = image.planes[0];
+    final yBytes = yPlane.bytes;
+    final rowStride = yPlane.bytesPerRow;
+    final pixelStride = yPlane.bytesPerPixel ?? 1;
+
+    final minDim = math.min(width, height);
+    final startX = (width - minDim) ~/ 2;
+    final startY = (height - minDim) ~/ 2;
+
+    final frameImg = img.Image(width: targetSize, height: targetSize);
+    final scale = minDim / targetSize;
+
+    for (int y = 0; y < targetSize; y++) {
+      final srcY = (startY + y * scale).toInt().clamp(0, height - 1);
+      final rowOffset = srcY * rowStride;
+      for (int x = 0; x < targetSize; x++) {
+        final srcX = (startX + x * scale).toInt().clamp(0, width - 1);
+        final lum = yBytes[rowOffset + srcX * pixelStride];
+        frameImg.setPixelRgb(x, y, lum, lum, lum);
+      }
+    }
+    return Uint8List.fromList(img.encodeJpg(frameImg, quality: 75));
+  }
+
   /// Disposes vision resources.
   void dispose() {
     _isInitialized = false;

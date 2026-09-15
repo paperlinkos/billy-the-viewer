@@ -2,6 +2,8 @@ import 'dart:typed_data';
 import 'ad_target.dart';
 import 'recognition_signature.dart';
 
+export 'ad_medium_context.dart';
+
 /// Campaign status lifecycle states.
 enum CampaignStatus {
   draft,
@@ -45,6 +47,10 @@ class Campaign {
   final RecognitionSignature? recognitionSignature;
   final String signatureVersion;
 
+  // Medium and physical location context
+  final AdMediumType mediumType;
+  final GeoLocation? location;
+
   const Campaign({
     required this.id,
     this.ownerAccountId = 'system-demo-owner',
@@ -60,6 +66,8 @@ class Campaign {
     this.endAt,
     this.recognitionSignature,
     this.signatureVersion = '1.0',
+    this.mediumType = AdMediumType.universal,
+    this.location,
   });
 
   /// Validates whether a destination URL meets format requirements:
@@ -122,6 +130,8 @@ class Campaign {
     DateTime? endAt,
     RecognitionSignature? recognitionSignature,
     String? signatureVersion,
+    AdMediumType? mediumType,
+    GeoLocation? location,
   }) {
     return Campaign(
       id: id ?? this.id,
@@ -138,6 +148,8 @@ class Campaign {
       endAt: endAt ?? this.endAt,
       recognitionSignature: recognitionSignature ?? this.recognitionSignature,
       signatureVersion: signatureVersion ?? this.signatureVersion,
+      mediumType: mediumType ?? this.mediumType,
+      location: location ?? this.location,
     );
   }
 
@@ -159,6 +171,8 @@ class Campaign {
       destinationUrl: destinationUrl,
       imageAsset: creativeAsset ?? creativePath ?? '',
       actions: actions,
+      mediumType: mediumType,
+      location: location,
       embedding: recognitionSignature?.primaryFeatures ?? const [],
     );
   }
@@ -179,6 +193,8 @@ class Campaign {
       if (recognitionSignature != null)
         'recognitionSignature': recognitionSignature!.toJson(),
       'signatureVersion': signatureVersion,
+      'mediumType': mediumType.name,
+      if (location != null) 'location': location!.toJson(),
     };
   }
 
@@ -188,6 +204,19 @@ class Campaign {
       (s) => s.name == statusName,
       orElse: () => CampaignStatus.draft,
     );
+
+    AdMediumType parsedMedium = AdMediumType.universal;
+    if (json['mediumType'] is String) {
+      parsedMedium = AdMediumType.values.firstWhere(
+        (m) => m.name == json['mediumType'],
+        orElse: () => AdMediumType.universal,
+      );
+    }
+
+    GeoLocation? parsedLocation;
+    if (json['location'] is Map<String, dynamic>) {
+      parsedLocation = GeoLocation.fromJson(json['location'] as Map<String, dynamic>);
+    }
 
     return Campaign(
       id: json['id'] as String,
@@ -213,6 +242,8 @@ class Campaign {
               json['recognitionSignature'] as Map<String, dynamic>)
           : null,
       signatureVersion: json['signatureVersion'] as String? ?? '1.0',
+      mediumType: parsedMedium,
+      location: parsedLocation,
     );
   }
 }

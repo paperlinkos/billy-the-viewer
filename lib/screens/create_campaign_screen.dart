@@ -108,21 +108,33 @@ class _CreateCampaignScreenState extends State<CreateCampaignScreen> {
     }
   }
 
-  Future<void> _useSampleCreative() async {
+  Future<void> _useSampleCreative({
+    String assetPath = 'assets/campaigns/demo_ad.jpg',
+    String? defaultAdName,
+    String? defaultBrand,
+    String? defaultDestination,
+  }) async {
     try {
-      final ByteData data = await rootBundle.load('assets/campaigns/demo_ad.jpg');
+      final ByteData data = await rootBundle.load(assetPath);
       final Uint8List bytes = data.buffer.asUint8List();
       setState(() {
         _creativeBytes = bytes;
         _creativePath = null;
-        _creativeAsset = 'assets/campaigns/demo_ad.jpg';
+        _creativeAsset = assetPath;
         _isCreativeConfirmed = false;
         _errorMessage = null;
-        if (_adNameController.text.isEmpty) {
+        if (defaultAdName != null) {
+          _adNameController.text = defaultAdName;
+        } else if (_adNameController.text.isEmpty) {
           _adNameController.text = 'SAMPLE CAMPAIGN';
         }
-        if (_brandController.text.isEmpty) {
+        if (defaultBrand != null) {
+          _brandController.text = defaultBrand;
+        } else if (_brandController.text.isEmpty) {
           _brandController.text = 'Billy Showcase';
+        }
+        if (defaultDestination != null) {
+          _destinationController.text = defaultDestination;
         }
       });
     } catch (e) {
@@ -1047,6 +1059,18 @@ class _CreateCampaignScreenState extends State<CreateCampaignScreen> {
               height: 44.0,
               isOutlined: true,
               onPressed: _useSampleCreative,
+            ),
+            const SizedBox(height: BillyTheme.space8),
+            BillyButton(
+              text: 'USE SAMPLE AD B (AURORA VISION)',
+              height: 44.0,
+              isOutlined: true,
+              onPressed: () => _useSampleCreative(
+                assetPath: 'assets/campaigns/demo_ad_2.jpg',
+                defaultAdName: 'AURORA VISION',
+                defaultBrand: 'Aurora Optics',
+                defaultDestination: 'https://aurora.example.com',
+              ),
             ),
           ],
         ),
