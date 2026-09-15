@@ -8,6 +8,7 @@ import '../services/account_session.dart';
 import '../services/campaign_repository.dart';
 import '../services/signature_service.dart';
 import '../widgets/billy_button.dart';
+import 'account_screen.dart';
 import 'campaign_list_screen.dart';
 
 /// Screen managing Billy's multi-step advertiser campaign pipeline:
@@ -19,6 +20,7 @@ import 'campaign_list_screen.dart';
 class CreateCampaignScreen extends StatefulWidget {
   final SignatureService? signatureService;
   final CampaignRepository? campaignRepository;
+  final AccountSession? accountSession;
   final Uint8List? initialCreativeBytes;
   final String? ownerAccountId;
 
@@ -26,6 +28,7 @@ class CreateCampaignScreen extends StatefulWidget {
     super.key,
     this.signatureService,
     this.campaignRepository,
+    this.accountSession,
     this.initialCreativeBytes,
     this.ownerAccountId,
   });
@@ -47,6 +50,7 @@ class _CreateCampaignScreenState extends State<CreateCampaignScreen> {
   final ImagePicker _picker = ImagePicker();
   late final SignatureService _signatureService;
   late final CampaignRepository _campaignRepository;
+  late final AccountSession _accountSession;
 
   Uint8List? _creativeBytes;
   String? _creativePath;
@@ -62,6 +66,7 @@ class _CreateCampaignScreenState extends State<CreateCampaignScreen> {
   @override
   void initState() {
     super.initState();
+    _accountSession = widget.accountSession ?? AccountSession();
     _signatureService = widget.signatureService ?? SignatureService();
     _campaignRepository = widget.campaignRepository ?? CampaignRepository();
     if (widget.initialCreativeBytes != null) {
@@ -128,6 +133,15 @@ class _CreateCampaignScreenState extends State<CreateCampaignScreen> {
   }
 
   Future<void> _processAndActivateCampaign() async {
+    if (_accountSession.isConsumer) {
+      setState(() {
+        _errorMessage = 'CONSUMER ACCOUNTS CANNOT CREATE CAMPAIGNS';
+        _currentStatus = CampaignStatus.draft;
+        _isReviewStep = false;
+      });
+      return;
+    }
+
     if (_formKey.currentState != null && !_formKey.currentState!.validate()) {
       setState(() {
         _isReviewStep = false;
@@ -157,8 +171,13 @@ class _CreateCampaignScreenState extends State<CreateCampaignScreen> {
     });
 
     try {
-      // Brief pause to reflect data preparation
-      await Future.delayed(const Duration(milliseconds: 250));
+      await Future.delayed(const Duration(milliseconds: 300));
+
+      if (!mounted) return;
+      setState(() {
+        _processingStageText = 'ANALYZING VISUAL CREATIVE...';
+      });
+      await Future.delayed(const Duration(milliseconds: 400));
 
       if (!mounted) return;
       setState(() {
@@ -171,7 +190,7 @@ class _CreateCampaignScreenState extends State<CreateCampaignScreen> {
       // Packaging into active campaign
       final campaignId = 'camp-${DateTime.now().millisecondsSinceEpoch}';
       final resolvedOwnerId = widget.ownerAccountId ??
-          AccountSession().currentAccount?.id ??
+          _accountSession.currentAccount?.id ??
           'system-demo-owner';
 
       final campaign = Campaign(
@@ -271,7 +290,7 @@ class _CreateCampaignScreenState extends State<CreateCampaignScreen> {
 
   void _navigateToCampaignList() {
     final resolvedOwnerId = widget.ownerAccountId ??
-        (AccountSession().isAdvertiser ? AccountSession().currentAccount?.id : null);
+        (_accountSession.isAdvertiser ? _accountSession.currentAccount?.id : null);
     Navigator.of(context).pushReplacement(
       MaterialPageRoute(
         builder: (_) => CampaignListScreen(
@@ -282,8 +301,108 @@ class _CreateCampaignScreenState extends State<CreateCampaignScreen> {
     );
   }
 
+  Widget _buildAccessDeniedView(BuildContext context) {
+    return Scaffold(
+      backgroundColor: BillyTheme.background,
+      body: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: BillyTheme.space24),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const SizedBox(height: BillyTheme.space16),
+              GestureDetector(
+                onTap: () => Navigator.of(context).pop(),
+                child: Container(
+                  color: Colors.transparent,
+                  padding: const EdgeInsets.symmetric(vertical: BillyTheme.space8),
+                  child: Row(
+                    children: const [
+                      Icon(Icons.arrow_back, size: 18, color: BillyTheme.black),
+                      SizedBox(width: BillyTheme.space8),
+                      Text(
+                        'BACK',
+                        style: TextStyle(
+                          fontSize: 11.0,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 2.0,
+                          color: BillyTheme.black,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: BillyTheme.space12),
+              const Divider(
+                color: BillyTheme.black,
+                thickness: BillyTheme.borderWidthThin,
+                height: BillyTheme.borderWidthThin,
+              ),
+              const SizedBox(height: BillyTheme.space32),
+              const Text(
+                'ACCESS RESTRICTED',
+                style: TextStyle(
+                  fontSize: 28.0,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: -1.0,
+                  color: BillyTheme.textPrimary,
+                ),
+              ),
+              const SizedBox(height: BillyTheme.space8),
+              const Text(
+                'ADVERTISER ACCOUNT REQUIRED',
+                style: TextStyle(
+                  fontSize: 11.0,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 2.0,
+                  color: BillyTheme.textSecondary,
+                ),
+              ),
+              const SizedBox(height: BillyTheme.space24),
+              const Text(
+                'CAMPAIGN CREATION AND MANAGEMENT IS RESERVED FOR ADVERTISERS.\n\nTO CREATE AND MANAGE ADS, SWITCH TO AN ADVERTISER ACCOUNT.',
+                style: TextStyle(
+                  fontSize: 13.0,
+                  fontWeight: FontWeight.w500,
+                  height: 1.5,
+                  letterSpacing: 0.5,
+                  color: BillyTheme.textPrimary,
+                ),
+              ),
+              const Spacer(),
+              BillyButton(
+                text: 'CONTINUE TO ACCOUNT',
+                height: 52.0,
+                onPressed: () {
+                  Navigator.of(context).pushReplacement(
+                    MaterialPageRoute(
+                      builder: (_) => AccountScreen(accountSession: _accountSession),
+                    ),
+                  );
+                },
+              ),
+              const SizedBox(height: BillyTheme.space12),
+              BillyButton(
+                text: 'GO BACK',
+                isOutlined: true,
+                height: 52.0,
+                onPressed: () => Navigator.of(context).pop(),
+              ),
+              const SizedBox(height: BillyTheme.space48),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    if (_accountSession.isConsumer) {
+      return _buildAccessDeniedView(context);
+    }
+
     return Scaffold(
       backgroundColor: BillyTheme.background,
       body: SafeArea(
@@ -331,8 +450,8 @@ class _CreateCampaignScreenState extends State<CreateCampaignScreen> {
                   GestureDetector(
                     onTap: () {
                       final resolvedOwnerId = widget.ownerAccountId ??
-                          (AccountSession().isAdvertiser
-                              ? AccountSession().currentAccount?.id
+                          (_accountSession.isAdvertiser
+                              ? _accountSession.currentAccount?.id
                               : null);
                       Navigator.of(context).push(
                         MaterialPageRoute(

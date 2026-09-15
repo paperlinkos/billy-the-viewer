@@ -5,6 +5,7 @@ import '../services/account_session.dart';
 import '../widgets/billy_button.dart';
 import 'campaign_list_screen.dart';
 import 'create_campaign_screen.dart';
+import 'rewards_screen.dart';
 
 /// Minimal account and session management screen.
 /// Allows fast-path switching between Consumer (Viewer) and Advertiser roles.
@@ -228,6 +229,23 @@ class _AccountScreenState extends State<AccountScreen> {
         const SizedBox(height: BillyTheme.space12),
 
         BillyButton(
+          text: 'REWARDS',
+          isOutlined: true,
+          height: 52.0,
+          onPressed: () {
+            Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (_) => RewardsScreen(
+                  accountSession: _accountSession,
+                ),
+              ),
+            );
+          },
+        ),
+
+        const SizedBox(height: BillyTheme.space12),
+
+        BillyButton(
           text: 'SIGN OUT',
           isOutlined: true,
           height: 52.0,
@@ -324,6 +342,15 @@ class _AccountScreenState extends State<AccountScreen> {
         const SizedBox(height: BillyTheme.space12),
 
         BillyButton(
+          text: 'ACCOUNT SETTINGS',
+          isOutlined: true,
+          height: 52.0,
+          onPressed: () => _showAccountSettingsDialog(context, account),
+        ),
+
+        const SizedBox(height: BillyTheme.space12),
+
+        BillyButton(
           text: 'SIGN OUT',
           isOutlined: true,
           height: 52.0,
@@ -336,6 +363,81 @@ class _AccountScreenState extends State<AccountScreen> {
 
         const SizedBox(height: BillyTheme.space48),
       ],
+    );
+  }
+
+  void _showAccountSettingsDialog(BuildContext context, Account account) {
+    showDialog(
+      context: context,
+      builder: (dialogCtx) => AlertDialog(
+        backgroundColor: BillyTheme.background,
+        shape: const RoundedRectangleBorder(
+          side: BorderSide(color: BillyTheme.black, width: 2),
+        ),
+        title: const Text(
+          'ACCOUNT SETTINGS',
+          style: TextStyle(
+            fontSize: 16.0,
+            fontWeight: FontWeight.w900,
+            letterSpacing: 1.5,
+            color: BillyTheme.textPrimary,
+          ),
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'ACCOUNT: ${account.displayName}',
+              style: const TextStyle(
+                fontSize: 12.0,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 1.0,
+                color: BillyTheme.textPrimary,
+              ),
+            ),
+            const SizedBox(height: BillyTheme.space8),
+            Text(
+              'EMAIL: ${account.email}',
+              style: const TextStyle(
+                fontSize: 11.0,
+                fontWeight: FontWeight.w500,
+                color: BillyTheme.textSecondary,
+              ),
+            ),
+            const SizedBox(height: BillyTheme.space8),
+            Text(
+              'ROLE: ${account.role.displayName.toUpperCase()}',
+              style: const TextStyle(
+                fontSize: 11.0,
+                fontWeight: FontWeight.w500,
+                color: BillyTheme.textSecondary,
+              ),
+            ),
+            const SizedBox(height: BillyTheme.space8),
+            Text(
+              'ID: ${account.id}',
+              style: const TextStyle(
+                fontSize: 10.0,
+                fontWeight: FontWeight.w400,
+                color: BillyTheme.textSecondary,
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogCtx).pop(),
+            child: const Text(
+              'CLOSE',
+              style: TextStyle(
+                fontWeight: FontWeight.w700,
+                color: BillyTheme.black,
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

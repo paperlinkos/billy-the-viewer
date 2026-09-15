@@ -6,6 +6,8 @@ import 'package:billy_the_viewer/models/ad_target.dart';
 import 'package:billy_the_viewer/screens/account_screen.dart';
 import 'package:billy_the_viewer/screens/create_campaign_screen.dart';
 import 'package:billy_the_viewer/screens/inline_camera_view.dart';
+import 'package:billy_the_viewer/screens/rewards_screen.dart';
+import 'package:billy_the_viewer/services/account_session.dart';
 import 'package:billy_the_viewer/services/camera_service.dart';
 import 'package:billy_the_viewer/services/campaign_repository.dart';
 import 'package:billy_the_viewer/services/matching_engine.dart';
@@ -19,6 +21,7 @@ class HomeScreen extends StatefulWidget {
   final VisionService? visionService;
   final MatchingEngine? matchingEngine;
   final List<AdTarget>? initialCampaigns;
+  final AccountSession? accountSession;
 
   const HomeScreen({
     super.key,
@@ -26,6 +29,7 @@ class HomeScreen extends StatefulWidget {
     this.visionService,
     this.matchingEngine,
     this.initialCampaigns,
+    this.accountSession,
   });
 
   @override
@@ -36,6 +40,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   late final CameraService _cameraService;
   late final VisionService _visionService;
   late final MatchingEngine _matchingEngine;
+  late final AccountSession _accountSession;
 
   bool _isCameraActive = false;
   RecognitionState _recognitionState = RecognitionState.looking;
@@ -49,10 +54,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   // Live similarity score seen during scanning
   double _liveSimilarity = 0.0;
 
-  // Three-frame recognition confirmation state to ensure stability
-  String? _candidateMatchId;
-  int _candidateFrameCount = 0;
-  static const int _requiredConsecutiveFrames = 3;
+  // Rolling confidence window for movement-resilient match confirmation
+  static const int _rollingWindowSize = 6;
+  static const int _requiredConfidenceHits = 2;
+  final List<MatchResult?> _recentFrameMatches = [];
 
   // Threshold based on empirical separation benchmark:
   // Negatives score <= 0.18 or fail quality checks; positive ad scores >= 0.95.
@@ -66,6 +71,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     _cameraService = widget.cameraService ?? CameraService();
     _visionService = widget.visionService ?? VisionService();
     _matchingEngine = widget.matchingEngine ?? const MatchingEngine(threshold: _perceptualThreshold);
+    _accountSession = widget.accountSession ?? AccountSession();
 
     _initServices();
   }
@@ -103,22 +109,40 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     debugPrint('Billy: ${_campaigns.length} active campaign(s) ready for matching.');
   }
 
+  Future<void> _navigateToRewards() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => RewardsScreen(
+          accountSession: _accountSession,
+        ),
+      ),
+    );
+    if (mounted) setState(() {});
+  }
+
   Future<void> _navigateToCreateAd() async {
     await Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (_) => const CreateCampaignScreen(),
+        builder: (_) => CreateCampaignScreen(
+          accountSession: _accountSession,
+          ownerAccountId: _accountSession.currentAccount?.id,
+        ),
       ),
     );
     _syncCampaigns();
+    if (mounted) setState(() {});
   }
 
   Future<void> _navigateToAccount() async {
     await Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (_) => const AccountScreen(),
+        builder: (_) => AccountScreen(
+          accountSession: _accountSession,
+        ),
       ),
     );
     _syncCampaigns();
+    if (mounted) setState(() {});
   }
 
   void _syncCampaigns() {
@@ -210,63 +234,87 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         }
 
         final match = _matchingEngine.findBestMatch(embedding, _campaigns);
-        if (match != null) {
-          if (_candidateMatchId == match.target.id) {
-            _candidateFrameCount++;
-          } else {
-            _candidateMatchId = match.target.id;
-            _candidateFrameCount = 1;
-          }
-
-          if (_candidateFrameCount >= _requiredConsecutiveFrames) {
-            debugPrint(
-              'Billy Recognition: CONFIRMED MATCH ($_candidateFrameCount/$_requiredConsecutiveFrames frames) → '
-              '${match.target.name} (similarity: ${match.similarity.toStringAsFixed(3)})',
-            );
-            if (mounted) {
-              setState(() {
-                _recognitionState = RecognitionState.recognized;
-                _confirmedMatch = match;
-              });
-              _cameraService.stopImageStream();
-            }
-          } else {
-            debugPrint(
-              'Billy Recognition: CANDIDATE MATCH ($_candidateFrameCount/$_requiredConsecutiveFrames frames) → '
-              '${match.target.name} (similarity: ${match.similarity.toStringAsFixed(3)})',
-            );
-            if (mounted && _recognitionState != RecognitionState.confirming) {
-              setState(() {
-                _recognitionState = RecognitionState.confirming;
-              });
-            }
-          }
-        } else {
-          _candidateMatchId = null;
-          _candidateFrameCount = 0;
-          if (mounted && _recognitionState == RecognitionState.confirming) {
-            setState(() {
-              _recognitionState = RecognitionState.looking;
-            });
-          }
-        }
+        _recordFrameMatch(match);
+        _evaluateConfidenceWindow();
       } else {
         // Frame failed quality checks (too dark, overexposed, or uniform scene/wall)
-        _candidateMatchId = null;
-        _candidateFrameCount = 0;
+        _recordFrameMatch(null);
         if (mounted) {
           setState(() {
             _liveSimilarity = 0.0;
-            if (_recognitionState == RecognitionState.confirming) {
-              _recognitionState = RecognitionState.looking;
-            }
           });
         }
+        _evaluateConfidenceWindow();
       }
     } catch (e) {
       debugPrint('HomeScreen: Error processing camera frame: $e');
     } finally {
       _isProcessingFrame = false;
+    }
+  }
+
+  void _recordFrameMatch(MatchResult? match) {
+    _recentFrameMatches.add(match);
+    if (_recentFrameMatches.length > _rollingWindowSize) {
+      _recentFrameMatches.removeAt(0);
+    }
+  }
+
+  void _evaluateConfidenceWindow() {
+    MatchResult? confirmed;
+    String? bestCandidateTargetId;
+    int maxHits = 0;
+
+    // Evaluate candidate target hit frequency across recent frames in the window
+    final candidates = _recentFrameMatches.whereType<MatchResult>();
+    for (final m in candidates) {
+      final targetId = m.target.id;
+      final hits = _recentFrameMatches
+          .where((item) => item != null && item.target.id == targetId)
+          .toList();
+
+      if (hits.length > maxHits) {
+        maxHits = hits.length;
+        bestCandidateTargetId = targetId;
+      }
+
+      // Require sufficient confidence hits across the rolling window (e.g. 2+ hits)
+      // while strictly preventing any single random high-similarity frame from triggering
+      if (hits.length >= _requiredConfidenceHits) {
+        hits.sort((a, b) => b!.similarity.compareTo(a!.similarity));
+        confirmed = hits.first;
+        break;
+      }
+    }
+
+    if (confirmed != null) {
+      debugPrint(
+        'Billy Recognition: CONFIRMED MATCH ($maxHits/$_rollingWindowSize frames in window) → '
+        '${confirmed.target.name} (similarity: ${confirmed.similarity.toStringAsFixed(3)})',
+      );
+      if (mounted) {
+        setState(() {
+          _recognitionState = RecognitionState.recognized;
+          _confirmedMatch = confirmed;
+        });
+        _cameraService.stopImageStream();
+      }
+    } else if (maxHits > 0) {
+      debugPrint(
+        'Billy Recognition: ACCUMULATING CONFIDENCE ($maxHits/$_rollingWindowSize frames in window) → '
+        'Target ID $bestCandidateTargetId',
+      );
+      if (mounted && _recognitionState != RecognitionState.confirming) {
+        setState(() {
+          _recognitionState = RecognitionState.confirming;
+        });
+      }
+    } else {
+      if (mounted && _recognitionState == RecognitionState.confirming) {
+        setState(() {
+          _recognitionState = RecognitionState.looking;
+        });
+      }
     }
   }
 
@@ -277,8 +325,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       _recognitionState = RecognitionState.looking;
       _confirmedMatch = null;
       _liveSimilarity = 0.0;
-      _candidateMatchId = null;
-      _candidateFrameCount = 0;
+      _recentFrameMatches.clear();
     });
     _initializeCamera();
   }
@@ -289,8 +336,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       _recognitionState = RecognitionState.looking;
       _confirmedMatch = null;
       _liveSimilarity = 0.0;
-      _candidateMatchId = null;
-      _candidateFrameCount = 0;
+      _recentFrameMatches.clear();
     });
     _cameraService.dispose();
   }
@@ -300,8 +346,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       _recognitionState = RecognitionState.looking;
       _confirmedMatch = null;
       _liveSimilarity = 0.0;
-      _candidateMatchId = null;
-      _candidateFrameCount = 0;
+      _recentFrameMatches.clear();
     });
     _startFrameProcessing();
   }
@@ -471,60 +516,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
                   const SizedBox(height: BillyTheme.space12),
 
-                  // --- Subtle Secondary Advertiser & Account Entry Points ---
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      GestureDetector(
-                        onTap: _navigateToCreateAd,
-                        child: const Padding(
-                          padding: EdgeInsets.symmetric(
-                            vertical: BillyTheme.space8,
-                            horizontal: BillyTheme.space8,
-                          ),
-                          child: Text(
-                            'CREATE AD',
-                            style: TextStyle(
-                              fontSize: 11.0,
-                              fontWeight: FontWeight.w700,
-                              letterSpacing: 2.0,
-                              color: BillyTheme.textSecondary,
-                              decoration: TextDecoration.underline,
-                              decorationColor: BillyTheme.borderSubtle,
-                            ),
-                          ),
-                        ),
-                      ),
-                      const Text(
-                        '·',
-                        style: TextStyle(
-                          fontSize: 12.0,
-                          fontWeight: FontWeight.w700,
-                          color: BillyTheme.textSecondary,
-                        ),
-                      ),
-                      GestureDetector(
-                        onTap: _navigateToAccount,
-                        child: const Padding(
-                          padding: EdgeInsets.symmetric(
-                            vertical: BillyTheme.space8,
-                            horizontal: BillyTheme.space8,
-                          ),
-                          child: Text(
-                            'ACCOUNT',
-                            style: TextStyle(
-                              fontSize: 11.0,
-                              fontWeight: FontWeight.w700,
-                              letterSpacing: 2.0,
-                              color: BillyTheme.textSecondary,
-                              decoration: TextDecoration.underline,
-                              decorationColor: BillyTheme.borderSubtle,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
+                  // --- Role-Based Secondary Navigation ---
+                  _buildSecondaryNavigation(),
 
                   const SizedBox(height: BillyTheme.space16),
 
@@ -545,7 +538,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                         style: BillyTheme.footerText,
                       ),
                       Text(
-                        'PHASE 07',
+                        'PHASE 09',
                         style: BillyTheme.footerText,
                       ),
                     ],
@@ -558,6 +551,69 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           ),
         );
       },
+    );
+  }
+
+  Widget _buildSecondaryNavigation() {
+    final isConsumer = _accountSession.isConsumer;
+    final isAdvertiser = _accountSession.isAdvertiser;
+
+    Widget navItem(String label, VoidCallback onTap) {
+      return GestureDetector(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(
+            vertical: BillyTheme.space8,
+            horizontal: BillyTheme.space8,
+          ),
+          child: Text(
+            label,
+            style: const TextStyle(
+              fontSize: 11.0,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 2.0,
+              color: BillyTheme.textSecondary,
+              decoration: TextDecoration.underline,
+              decorationColor: BillyTheme.borderSubtle,
+            ),
+          ),
+        ),
+      );
+    }
+
+    const dot = Text(
+      '·',
+      style: TextStyle(
+        fontSize: 12.0,
+        fontWeight: FontWeight.w700,
+        color: BillyTheme.textSecondary,
+      ),
+    );
+
+    final List<Widget> items = [];
+
+    if (isConsumer) {
+      // Viewer sees only REWARDS and ACCOUNT
+      items.add(navItem('REWARDS', _navigateToRewards));
+      items.add(dot);
+      items.add(navItem('ACCOUNT', _navigateToAccount));
+    } else if (isAdvertiser) {
+      // Advertiser sees CREATE AD and ACCOUNT
+      items.add(navItem('CREATE AD', _navigateToCreateAd));
+      items.add(dot);
+      items.add(navItem('ACCOUNT', _navigateToAccount));
+    } else {
+      // Guest sees REWARDS, CREATE AD, ACCOUNT
+      items.add(navItem('REWARDS', _navigateToRewards));
+      items.add(dot);
+      items.add(navItem('CREATE AD', _navigateToCreateAd));
+      items.add(dot);
+      items.add(navItem('ACCOUNT', _navigateToAccount));
+    }
+
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: items,
     );
   }
 }

@@ -1,0 +1,66 @@
+{
+  "reference": "assets/campaigns/demo_ad.jpg",
+  "threshold": 0.65,
+  "tests": [
+    {
+      "filename": "match_distance_far.jpg",
+      "expected": "TRUE MATCH",
+      "variation": "Distance variation (scaled 40% in room background)"
+    },
+    {
+      "filename": "match_rotation_15deg.jpg",
+      "expected": "TRUE MATCH",
+      "variation": "Slight rotation (15 degrees)"
+    },
+    {
+      "filename": "match_low_light.jpg",
+      "expected": "TRUE MATCH",
+      "variation": "Low lighting (dim ambient environment)"
+    },
+    {
+      "filename": "match_bright_glare.jpg",
+      "expected": "TRUE MATCH",
+      "variation": "Overexposed bright lighting / glare flare"
+    },
+    {
+      "filename": "match_motion_blur.jpg",
+      "expected": "TRUE MATCH",
+      "variation": "Motion blur / rapid phone movement"
+    },
+    {
+      "filename": "match_partial_occlusion.jpg",
+      "expected": "TRUE MATCH",
+      "variation": "Partial visibility (65% crop with occlusion)"
+    },
+    {
+      "filename": "match_screen_display.jpg",
+      "expected": "TRUE MATCH",
+      "variation": "Displayed on phone / laptop screen frame"
+    },
+    {
+      "filename": "match_printed_paper.jpg",
+      "expected": "TRUE MATCH",
+      "variation": "Printed on matte paper with paper texture"
+    },
+    {
+      "filename": "nomatch_blank_wall.jpg",
+      "expected": "FALSE MATCH",
+      "variation": "Unrelated plain stucco wall"
+    },
+    {
+      "filename": "nomatch_wood_desk.jpg",
+      "expected": "FALSE MATCH",
+      "variation": "Unrelated wooden desk surface"
+    },
+    {
+      "filename": "nomatch_tile_floor.jpg",
+      "expected": "FALSE MATCH",
+      "variation": "Unrelated checkered floor tiles"
+    },
+    {
+      "filename": "nomatch_other_ad.jpg",
+      "expected": "FALSE MATCH",
+      "variation": "Unrelated advertisement creative (different branding)"
+    }
+  ]
+}
