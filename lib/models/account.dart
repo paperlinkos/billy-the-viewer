@@ -1,3 +1,5 @@
+import 'advertiser_profile.dart';
+
 /// Account roles supported by Billy The Viewer.
 enum AccountRole {
   consumer,
@@ -23,6 +25,7 @@ class Account {
   final String displayName;
   final AccountRole role;
   final DateTime createdAt;
+  final AdvertiserProfile? advertiserProfile;
 
   const Account({
     required this.id,
@@ -30,6 +33,7 @@ class Account {
     required this.displayName,
     required this.role,
     required this.createdAt,
+    this.advertiserProfile,
   });
 
   bool get isAdvertiser => role == AccountRole.advertiser;
@@ -41,6 +45,7 @@ class Account {
     String? displayName,
     AccountRole? role,
     DateTime? createdAt,
+    AdvertiserProfile? advertiserProfile,
   }) {
     return Account(
       id: id ?? this.id,
@@ -48,6 +53,7 @@ class Account {
       displayName: displayName ?? this.displayName,
       role: role ?? this.role,
       createdAt: createdAt ?? this.createdAt,
+      advertiserProfile: advertiserProfile ?? this.advertiserProfile,
     );
   }
 

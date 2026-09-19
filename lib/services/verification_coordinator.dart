@@ -97,6 +97,7 @@ class VerificationCoordinator {
       // 5. Compute live frame embedding
       final frameEmbedding = await geminiClient.embedImageBytes(frameJpegBytes);
       if (frameEmbedding.isEmpty) {
+        debugPrint('VerificationCoordinator: Live frame embedding from geminiClient is empty.');
         return null;
       }
 
@@ -109,6 +110,7 @@ class VerificationCoordinator {
         return MatchResult(target: candidate, similarity: score);
       }
 
+      debugPrint('VerificationCoordinator: candidate "${candidate.name}" rejected because score (${score.toStringAsFixed(4)}) < threshold ($verificationThreshold).');
       return null;
     } catch (e) {
       debugPrint('VerificationCoordinator error verifying candidate: $e');
@@ -126,8 +128,13 @@ class VerificationCoordinator {
 
     List<int> bytes = [];
 
-    // Attempt to load from asset path
-    if (target.imageAsset.isNotEmpty) {
+    // 1. Direct in-memory creative bytes from campaign creation (newly uploaded ads)
+    if (target.creativeBytes != null && target.creativeBytes!.isNotEmpty) {
+      bytes = target.creativeBytes!;
+    }
+
+    // 2. Attempt to load from asset path or file system
+    if (bytes.isEmpty && target.imageAsset.isNotEmpty) {
       try {
         final data = await rootBundle.load(target.imageAsset);
         bytes = data.buffer.asUint8List();

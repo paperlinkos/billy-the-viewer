@@ -80,6 +80,36 @@ class VisionService {
     return _extractFromDecodedImage(image);
   }
 
+  /// Extracts standard overlapping crop regions (top, bottom, left, right)
+  /// for multi-region partial ad recognition.
+  static Map<String, img.Image> extractOverlappingCrops(img.Image image) {
+    final w = image.width;
+    final h = image.height;
+    final crops = <String, img.Image>{};
+
+    if (w < 64 || h < 64) return crops;
+
+    // Top 65% region (captures upper creative, headers, headlines)
+    final topH = (h * 0.65).round().clamp(32, h);
+    crops['top'] = img.copyCrop(image, x: 0, y: 0, width: w, height: topH);
+
+    // Bottom 65% region (captures lower creative, body text, footer)
+    final bottomY = (h * 0.35).round().clamp(0, h - 32);
+    final bottomH = h - bottomY;
+    crops['bottom'] = img.copyCrop(image, x: 0, y: bottomY, width: w, height: bottomH);
+
+    // Left 65% region (captures left column, vertical banners)
+    final leftW = (w * 0.65).round().clamp(32, w);
+    crops['left'] = img.copyCrop(image, x: 0, y: 0, width: leftW, height: h);
+
+    // Right 65% region (captures right column, vertical banners)
+    final rightX = (w * 0.35).round().clamp(0, w - 32);
+    final rightW = w - rightX;
+    crops['right'] = img.copyCrop(image, x: rightX, y: 0, width: rightW, height: h);
+
+    return crops;
+  }
+
   /// Checks whether a live camera frame or image meets minimum quality criteria.
   static FrameQuality checkQuality(double meanLum, double stdDev) {
     if (meanLum < minAcceptableLuminance) {
@@ -217,7 +247,15 @@ class VisionService {
 
   /// Extracts 192-dim relative spatial descriptor from decoded image asset.
   List<double> _extractFromDecodedImage(img.Image rawImage) {
-    final resized = img.copyResize(rawImage, width: 128, height: 128);
+    // Crop to center square region matching the geometry used by live Y-plane recognition path
+    final minDim = math.min(rawImage.width, rawImage.height);
+    final startX = (rawImage.width - minDim) ~/ 2;
+    final startY = (rawImage.height - minDim) ~/ 2;
+    final cropped = (rawImage.width != minDim || rawImage.height != minDim)
+        ? img.copyCrop(rawImage, x: startX, y: startY, width: minDim, height: minDim)
+        : rawImage;
+
+    final resized = img.copyResize(cropped, width: 128, height: 128);
     const gridSize = 8;
     final cellW = resized.width ~/ gridSize;
     final cellH = resized.height ~/ gridSize;

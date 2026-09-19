@@ -174,6 +174,10 @@ class Campaign {
       mediumType: mediumType,
       location: location,
       embedding: recognitionSignature?.primaryFeatures ?? const [],
+      ocrText: recognitionSignature?.ocrText,
+      normalizedOcrText: recognitionSignature?.normalizedOcrText,
+      creativeBytes: creativeBytes,
+      recognitionSignature: recognitionSignature,
     );
   }
 

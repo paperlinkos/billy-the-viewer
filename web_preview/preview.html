@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BILLY THE VIEWER — Logo & Identity Exploration</title>
+<style>
+  :root {
+    --bg: #09090b;
+    --card: #121215;
+    --border: #222226;
+    --accent: #ffffff;
+    --muted: #71717a;
+    --subtle: #a1a1aa;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Helvetica Neue", sans-serif; }
+  body {
+    background: var(--bg);
+    color: var(--accent);
+    padding: 48px 32px;
+    min-height: 100vh;
+  }
+  header {
+    max-width: 1400px;
+    margin: 0 auto 48px auto;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 24px;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+  }
+  .title-group h1 {
+    font-size: 28px;
+    font-weight: 800;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+  }
+  .title-group p {
+    color: var(--muted);
+    font-size: 13px;
+    letter-spacing: 0.05em;
+    margin-top: 6px;
+    text-transform: uppercase;
+  }
+  .spec-badge {
+    font-family: monospace;
+    font-size: 11px;
+    padding: 6px 12px;
+    background: #18181b;
+    border: 1px solid #27272a;
+    border-radius: 4px;
+    color: var(--subtle);
+  }
+  .section-title {
+    max-width: 1400px;
+    margin: 32px auto 16px auto;
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--muted);
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .section-title::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--border);
+  }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 24px;
+    max-width: 1400px;
+    margin: 0 auto 40px auto;
+  }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    transition: transform 0.2s ease, border-color 0.2s ease;
+  }
+  .card:hover {
+    border-color: #3f3f46;
+    transform: translateY(-2px);
+  }
+  .card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .opt-tag {
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: #fafafa;
+  }
+  .name-tag {
+    font-size: 12px;
+    color: var(--muted);
+    font-family: monospace;
+  }
+  .preview-box {
+    width: 100%;
+    aspect-ratio: 1 / 1;
+    background: #000;
+    border-radius: 8px;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid #1f1f23;
+  }
+  .preview-box img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+  .mockups {
+    display: flex;
+    align-items: center;
+    justify-content: space-around;
+    padding: 16px;
+    background: #0c0c0e;
+    border: 1px solid #1c1c20;
+    border-radius: 8px;
+  }
+  .icon-mockup {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+  }
+  .ios-squircle {
+    width: 64px;
+    height: 64px;
+    border-radius: 15px;
+    overflow: hidden;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.6);
+    border: 1px solid rgba(255,255,255,0.08);
+  }
+  .ios-squircle img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+  .android-circle {
+    width: 64px;
+    height: 64px;
+    border-radius: 50%;
+    overflow: hidden;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.6);
+    border: 1px solid rgba(255,255,255,0.08);
+  }
+  .android-circle img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+  .mockup-lbl {
+    font-size: 10px;
+    color: var(--muted);
+    font-family: monospace;
+  }
+  .description {
+    font-size: 13px;
+    color: var(--subtle);
+    line-height: 1.5;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="title-group">
+    <h1>Billy The Viewer</h1>
+    <p>Minimalist Branding & App Icon Explorations</p>
+  </div>
+  <div class="spec-badge">
+    STRICT MONOCHROME • 1024×1024 MASTER
+  </div>
+</header>
+
+<div class="section-title">Fresh Concepts (Batch 2)</div>
+
+<div class="grid">
+  <!-- OPTION 5 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="opt-tag">Option 5</span>
+      <span class="name-tag">Monogram Scan B</span>
+    </div>
+    <div class="preview-box">
+      <img src="opt5.jpg" alt="Option 5: Monogram Scan B">
+    </div>
+    <div class="mockups">
+      <div class="icon-mockup">
+        <div class="ios-squircle"><img src="opt5.jpg" alt="iOS"></div>
+        <span class="mockup-lbl">iOS (15px)</span>
+      </div>
+      <div class="icon-mockup">
+        <div class="android-circle"><img src="opt5.jpg" alt="Android"></div>
+        <span class="mockup-lbl">Android</span>
+      </div>
+    </div>
+    <p class="description">Architectural capital <strong>'B'</strong> intersected with framing brackets and a razor-thin laser scan cross-line. Precise Swiss drafting aesthetic.</p>
+  </div>
+
+  <!-- OPTION 6 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="opt-tag">Option 6</span>
+      <span class="name-tag">Viewfinder Iris</span>
+    </div>
+    <div class="preview-box">
+      <img src="opt6.jpg" alt="Option 6: Viewfinder Iris">
+    </div>
+    <div class="mockups">
+      <div class="icon-mockup">
+        <div class="ios-squircle"><img src="opt6.jpg" alt="iOS"></div>
+        <span class="mockup-lbl">iOS (15px)</span>
+      </div>
+      <div class="icon-mockup">
+        <div class="android-circle"><img src="opt6.jpg" alt="Android"></div>
+        <span class="mockup-lbl">Android</span>
+      </div>
+    </div>
+    <p class="description">Geometric camera iris with an optical pupil encased within 4 high-contrast framing corner brackets. Immediately communicates camera & recognition.</p>
+  </div>
+
+  <!-- OPTION 7 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="opt-tag">Option 7</span>
+      <span class="name-tag">Cyclops Reticle</span>
+    </div>
+    <div class="preview-box">
+      <img src="opt7.jpg" alt="Option 7: Cyclops Reticle">
+    </div>
+    <div class="mockups">
+      <div class="icon-mockup">
+        <div class="ios-squircle"><img src="opt7.jpg" alt="iOS"></div>
+        <span class="mockup-lbl">iOS (15px)</span>
+      </div>
+      <div class="icon-mockup">
+        <div class="android-circle"><img src="opt7.jpg" alt="Android"></div>
+        <span class="mockup-lbl">Android</span>
+      </div>
+    </div>
+    <p class="description">Avant-garde Japanese editorial eye symbol. Stark concentric solid black rings cut by a vertical crosshair line. Bold, enigmatic, unforgettable.</p>
+  </div>
+
+  <!-- OPTION 8 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="opt-tag">Option 8</span>
+      <span class="name-tag">Infinity Viewfinder</span>
+    </div>
+    <div class="preview-box">
+      <img src="opt8.jpg" alt="Option 8: Infinity Viewfinder">
+    </div>
+    <div class="mockups">
+      <div class="icon-mockup">
+        <div class="ios-squircle"><img src="opt8.jpg" alt="iOS"></div>
+        <span class="mockup-lbl">iOS (15px)</span>
+      </div>
+      <div class="icon-mockup">
+        <div class="android-circle"><img src="opt8.jpg" alt="Android"></div>
+        <span class="mockup-lbl">Android</span>
+      </div>
+    </div>
+    <p class="description">Twin optical lenses inside a brutalist rangefinder silhouette. Clean, distinctive silhouette that scales down with immense clarity.</p>
+  </div>
+</div>
+
+<div class="section-title">Batch 1 Concepts</div>
+
+<div class="grid">
+  <!-- OPTION 1 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="opt-tag">Option 1</span>
+      <span class="name-tag">The Reticle Eye</span>
+    </div>
+    <div class="preview-box">
+      <img src="opt1.jpg" alt="Option 1">
+    </div>
+    <div class="mockups">
+      <div class="icon-mockup">
+        <div class="ios-squircle"><img src="opt1.jpg" alt="iOS"></div>
+        <span class="mockup-lbl">iOS</span>
+      </div>
+      <div class="icon-mockup">
+        <div class="android-circle"><img src="opt1.jpg" alt="Android"></div>
+        <span class="mockup-lbl">Android</span>
+      </div>
+    </div>
+    <p class="description">Circular iris with horizontal scanline and 4 reticle corners.</p>
+  </div>
+
+  <!-- OPTION 2 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="opt-tag">Option 2</span>
+      <span class="name-tag">Aperture B</span>
+    </div>
+    <div class="preview-box">
+      <img src="opt2.jpg" alt="Option 2">
+    </div>
+    <div class="mockups">
+      <div class="icon-mockup">
+        <div class="ios-squircle"><img src="opt2.jpg" alt="iOS"></div>
+        <span class="mockup-lbl">iOS</span>
+      </div>
+      <div class="icon-mockup">
+        <div class="android-circle"><img src="opt2.jpg" alt="Android"></div>
+        <span class="mockup-lbl">Android</span>
+      </div>
+    </div>
+    <p class="description">Capital letter 'B' with aperture iris blades.</p>
+  </div>
+
+  <!-- OPTION 3 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="opt-tag">Option 3</span>
+      <span class="name-tag">Viewfinder B</span>
+    </div>
+    <div class="preview-box">
+      <img src="opt3.jpg" alt="Option 3">
+    </div>
+    <div class="mockups">
+      <div class="icon-mockup">
+        <div class="ios-squircle"><img src="opt3.jpg" alt="iOS"></div>
+        <span class="mockup-lbl">iOS</span>
+      </div>
+      <div class="icon-mockup">
+        <div class="android-circle"><img src="opt3.jpg" alt="Android"></div>
+        <span class="mockup-lbl">Android</span>
+      </div>
+    </div>
+    <p class="description">Heavy poster-art 'B' with optical lens pupil inside solid framing box.</p>
+  </div>
+
+  <!-- OPTION 4 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="opt-tag">Option 4</span>
+      <span class="name-tag">Viewfinder Iris Emblem</span>
+    </div>
+    <div class="preview-box">
+      <img src="opt4.jpg" alt="Option 4">
+    </div>
+    <div class="mockups">
+      <div class="icon-mockup">
+        <div class="ios-squircle"><img src="opt4.jpg" alt="iOS"></div>
+        <span class="mockup-lbl">iOS</span>
+      </div>
+      <div class="icon-mockup">
+        <div class="android-circle"><img src="opt4.jpg" alt="Android"></div>
+        <span class="mockup-lbl">Android</span>
+      </div>
+    </div>
+    <p class="description">Stylized eye silhouette layered with letter 'B' and corner marks.</p>
+  </div>
+</div>
+
+</body>
+</html>

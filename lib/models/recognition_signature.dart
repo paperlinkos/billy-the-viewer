@@ -11,6 +11,9 @@ class RecognitionSignature {
   final List<double> perceptualFeatures;
   final List<double>? embedding;
   final Map<String, dynamic>? keypointFeatures;
+  final String? ocrText;
+  final String? normalizedOcrText;
+  final Map<String, dynamic>? ocrMetadata;
   final Map<String, dynamic> metadata;
 
   const RecognitionSignature({
@@ -18,6 +21,9 @@ class RecognitionSignature {
     this.perceptualFeatures = const [],
     this.embedding,
     this.keypointFeatures,
+    this.ocrText,
+    this.normalizedOcrText,
+    this.ocrMetadata,
     this.metadata = const {},
   });
 
@@ -30,6 +36,10 @@ class RecognitionSignature {
   }
 
   bool get isValid => primaryFeatures.isNotEmpty;
+
+  /// Whether readable text was detected and extracted via OCR.
+  bool get hasOcrText =>
+      normalizedOcrText != null && normalizedOcrText!.trim().isNotEmpty;
 
   /// Diagnostic metadata getters (non-technical summaries for diagnostics)
   String get algorithm => metadata['algorithm'] as String? ?? 'relative_spatial_gradient_192';
@@ -46,6 +56,9 @@ class RecognitionSignature {
       'perceptualFeatures': perceptualFeatures,
       if (embedding != null) 'embedding': embedding,
       if (keypointFeatures != null) 'keypointFeatures': keypointFeatures,
+      if (ocrText != null) 'ocrText': ocrText,
+      if (normalizedOcrText != null) 'normalizedOcrText': normalizedOcrText,
+      if (ocrMetadata != null) 'ocrMetadata': ocrMetadata,
       'metadata': metadata,
     };
   }
@@ -61,6 +74,9 @@ class RecognitionSignature {
           ?.map((e) => (e as num).toDouble())
           .toList(),
       keypointFeatures: json['keypointFeatures'] as Map<String, dynamic>?,
+      ocrText: json['ocrText'] as String?,
+      normalizedOcrText: json['normalizedOcrText'] as String?,
+      ocrMetadata: json['ocrMetadata'] as Map<String, dynamic>?,
       metadata: (json['metadata'] as Map<String, dynamic>?) ?? const {},
     );
   }
@@ -68,5 +84,5 @@ class RecognitionSignature {
   @override
   String toString() =>
       'RecognitionSignature(v: $version, perceptualDim: ${perceptualFeatures.length}, '
-      'embeddingDim: ${embedding?.length ?? 0}, valid: $isValid)';
+      'embeddingDim: ${embedding?.length ?? 0}, hasOcr: $hasOcrText, valid: $isValid)';
 }

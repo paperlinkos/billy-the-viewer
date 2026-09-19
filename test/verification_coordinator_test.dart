@@ -183,8 +183,8 @@ void main() {
       await tester.tap(find.text('SCAN'));
       await tester.pump();
 
-      // Scanner opens in looking state
-      expect(find.text('POINT AT AN AD'), findsOneWidget);
+      // Scanner opens in looking state (defaulting to clean photo-first mode)
+      expect(find.text('FRAME THE BILLBOARD OR SCREEN IN VIEWFINDER'), findsOneWidget);
     });
   });
 }

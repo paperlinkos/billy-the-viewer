@@ -167,7 +167,7 @@ void main() {
 
   group('Phase 4 Discovery Result UX Tests', () {
     testWidgets('TEST 4: Open camera with unrelated scene remains LOOKING...', (WidgetTester tester) async {
-      await tester.pumpWidget(const BillyApp());
+      await tester.pumpWidget(const BillyApp(home: HomeScreen()));
 
       expect(find.text('BILLY'), findsOneWidget);
       expect(find.text('SEE\nSOMETHING?'), findsOneWidget);
@@ -191,8 +191,8 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(fakeCameraService.initializeCalled, isTrue);
-      expect(find.text('SHOW BILLY SOMETHING'), findsOneWidget);
-      expect(find.text('POINT AT AN AD'), findsOneWidget);
+      expect(find.text('POINT AT AD & CAPTURE'), findsOneWidget);
+      expect(find.text('FRAME THE BILLBOARD OR SCREEN IN VIEWFINDER'), findsOneWidget);
 
       await tester.tap(find.text('✕'));
       await tester.pumpAndSettle();

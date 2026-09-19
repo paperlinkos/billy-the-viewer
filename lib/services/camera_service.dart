@@ -124,6 +124,25 @@ class CameraService {
     }
   }
 
+  /// Captures a high-quality still picture from the initialized camera controller.
+  /// If an image stream is currently active, it is stopped first to satisfy
+  /// CameraController requirements before taking a still picture.
+  Future<Uint8List?> takePicture() async {
+    if (_controller == null || !_controller!.value.isInitialized) {
+      return null;
+    }
+    try {
+      if (_isStreamingImages) {
+        await stopImageStream();
+      }
+      final XFile xFile = await _controller!.takePicture();
+      return await xFile.readAsBytes();
+    } catch (e) {
+      debugPrint('CameraService: Error taking still picture: $e');
+      return null;
+    }
+  }
+
   /// Opens the system app settings to allow the user to enable permissions.
   Future<bool> openSettings() async {
     return await openAppSettings();

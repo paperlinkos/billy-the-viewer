@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": {
+    "penthera": {
+      "source": "danoszz/penthera",
+      "sourceType": "github",
+      "skillPath": "skills/penthera/SKILL.md",
+      "computedHash": "656829db20c5b273c493e0a52a2a6f7010ee88654d201e835fa2d4e1e6855d9b"
+    }
+  }
+}

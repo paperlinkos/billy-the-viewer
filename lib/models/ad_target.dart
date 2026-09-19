@@ -1,15 +1,15 @@
 import 'dart:convert';
 import 'package:flutter/services.dart';
 import 'ad_action.dart';
-
 import 'ad_medium_context.dart';
+import 'recognition_signature.dart';
 
 export 'ad_action.dart';
 export 'ad_medium_context.dart';
 
 /// Represents a registered advertisement target within Billy's visual discovery registry.
 ///
-/// Embeddings are generated at runtime by VisionService from [imageAsset].
+/// Embeddings are generated at runtime by VisionService from [imageAsset] or [creativeBytes].
 class AdTarget {
   final String id;
   final String name;
@@ -32,6 +32,16 @@ class AdTarget {
   /// Empty until [HomeScreen] initializes campaigns via VisionService.
   final List<double> embedding;
 
+  /// Raw and normalized OCR text extracted from the creative.
+  final String? ocrText;
+  final String? normalizedOcrText;
+
+  /// In-memory creative bytes if available (used for direct verification without disk read).
+  final Uint8List? creativeBytes;
+
+  /// Full recognition signature containing visual and text representations.
+  final RecognitionSignature? recognitionSignature;
+
   const AdTarget({
     required this.id,
     required this.name,
@@ -46,7 +56,15 @@ class AdTarget {
     this.rewardAmount,
     this.rewardDescription,
     this.embedding = const [],
+    this.ocrText,
+    this.normalizedOcrText,
+    this.creativeBytes,
+    this.recognitionSignature,
   });
+
+  /// Whether this target has registered OCR text available for text matching.
+  bool get hasOcrText =>
+      normalizedOcrText != null && normalizedOcrText!.trim().isNotEmpty;
 
   /// Returns explicit actions if provided, or defaults to a single 'view' action
   /// derived from [destinationUrl].
@@ -80,6 +98,10 @@ class AdTarget {
       rewardAmount: rewardAmount,
       rewardDescription: rewardDescription,
       embedding: embedding,
+      ocrText: ocrText,
+      normalizedOcrText: normalizedOcrText,
+      creativeBytes: creativeBytes,
+      recognitionSignature: recognitionSignature,
     );
   }
 
@@ -128,7 +150,16 @@ class AdTarget {
       rewardType: json['rewardType'] as String?,
       rewardAmount: json['rewardAmount'] as num?,
       rewardDescription: json['rewardDescription'] as String?,
-      embedding: const [],
+      embedding: (json['embedding'] as List<dynamic>?)
+              ?.map((e) => (e as num).toDouble())
+              .toList() ??
+          const [],
+      ocrText: json['ocrText'] as String?,
+      normalizedOcrText: json['normalizedOcrText'] as String?,
+      recognitionSignature: json['recognitionSignature'] != null
+          ? RecognitionSignature.fromJson(
+              json['recognitionSignature'] as Map<String, dynamic>)
+          : null,
     );
   }
 
@@ -146,6 +177,11 @@ class AdTarget {
       if (rewardType != null) 'rewardType': rewardType,
       if (rewardAmount != null) 'rewardAmount': rewardAmount,
       if (rewardDescription != null) 'rewardDescription': rewardDescription,
+      if (embedding.isNotEmpty) 'embedding': embedding,
+      if (ocrText != null) 'ocrText': ocrText,
+      if (normalizedOcrText != null) 'normalizedOcrText': normalizedOcrText,
+      if (recognitionSignature != null)
+        'recognitionSignature': recognitionSignature!.toJson(),
     };
   }
 

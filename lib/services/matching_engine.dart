@@ -1,22 +1,37 @@
 import 'dart:math' as math;
 import 'package:billy_the_viewer/models/ad_target.dart';
+import 'package:billy_the_viewer/services/ocr_service.dart';
 
 /// The result of an advertisement embedding match comparison.
 class MatchResult {
   final AdTarget target;
-  final double similarity;
+  final double similarity; // Primary / combined similarity score in [0.0, 1.0]
+  final double visualSimilarity;
+  final double textSimilarity;
+  final bool isAmbiguous;
+  final double separationMargin;
+  final int distinctiveMatches;
+  final String? matchedPhrase;
 
   const MatchResult({
     required this.target,
     required this.similarity,
+    this.visualSimilarity = 0.0,
+    this.textSimilarity = 0.0,
+    this.isAmbiguous = false,
+    this.separationMargin = 1.0,
+    this.distinctiveMatches = 0,
+    this.matchedPhrase,
   });
 
   @override
   String toString() =>
-      'MatchResult(target: ${target.name}, similarity: ${similarity.toStringAsFixed(4)})';
+      'MatchResult(target: ${target.name}, sim: ${similarity.toStringAsFixed(4)}, '
+      'vis: ${visualSimilarity.toStringAsFixed(3)}, txt: ${textSimilarity.toStringAsFixed(3)}, '
+      'distinctive: $distinctiveMatches, ambiguous: $isAmbiguous, margin: ${separationMargin.toStringAsFixed(3)})';
 }
 
-/// MatchingEngine compares live feature embeddings against registered AdTargets.
+/// MatchingEngine compares live feature embeddings and OCR text against registered AdTargets.
 /// Completely decoupled from UI and Machine Learning inference.
 class MatchingEngine {
   /// Default threshold is 0.70 based on empirical separation benchmarking:
@@ -24,7 +39,35 @@ class MatchingEngine {
   /// - Unrelated scenes score <= 0.18 or are rejected by frame quality gates.
   final double threshold;
 
-  const MatchingEngine({this.threshold = 0.70});
+  /// Multi-signal weights: visual is primary (0.65), text is additive (0.35).
+  final double visualWeight;
+  final double textWeight;
+
+  /// Candidate separation margin threshold: if (bestScore - secondScore) < separationMargin,
+  /// the match is flagged as ambiguous and requires Gemini verification or further frames.
+  final double separationMargin;
+
+  /// Minimum visual similarity required for a candidate to be considered plausible.
+  final double plausibleThreshold;
+
+  /// Combined score required for instant crisp confirmation on-device.
+  final double crispCombinedThreshold;
+
+  static const double defaultThreshold = 0.70;
+  static const double defaultVisualWeight = 0.65;
+  static const double defaultTextWeight = 0.35;
+  static const double defaultSeparationMargin = 0.08;
+  static const double defaultPlausibleThreshold = 0.52;
+  static const double defaultCrispCombinedThreshold = 0.82;
+
+  const MatchingEngine({
+    this.threshold = defaultThreshold,
+    this.visualWeight = defaultVisualWeight,
+    this.textWeight = defaultTextWeight,
+    this.separationMargin = defaultSeparationMargin,
+    this.plausibleThreshold = defaultPlausibleThreshold,
+    this.crispCombinedThreshold = defaultCrispCombinedThreshold,
+  });
 
   /// Computes the cosine similarity between two feature vectors:
   /// cosine_similarity = dot(A, B) / (norm(A) * norm(B))
@@ -116,10 +159,133 @@ class MatchingEngine {
     return maxSim;
   }
 
+  /// Evaluates and ranks all candidate targets combining visual spatial features and OCR text signals.
+  /// Enforces candidate separation margin calculation and flags ambiguous / close results.
+  List<MatchResult> rankCandidatesMultiSignal({
+    required List<double> liveEmbedding,
+    required String liveNormalizedText,
+    required List<AdTarget> candidates,
+  }) {
+    if (liveEmbedding.isEmpty || candidates.isEmpty) {
+      return const [];
+    }
+
+    final List<MatchResult> scored = [];
+
+    for (final candidate in candidates) {
+      if (candidate.embedding.isEmpty) continue;
+
+      // 1. Visual similarity across 4 standard device rotations
+      final vSim = maxSimilarityAcrossRotations(candidate.embedding, liveEmbedding);
+
+      // 2. Text similarity & rich multi-word evidence
+      double tSim = 0.0;
+      double effectiveVWeight = visualWeight;
+      double effectiveTWeight = textWeight;
+      OcrTextMatchEvidence evidence = OcrTextMatchEvidence.empty;
+
+      if (candidate.hasOcrText && liveNormalizedText.trim().isNotEmpty) {
+        evidence = OcrService.evaluateMatchEvidence(
+          liveNormalizedText,
+          candidate.normalizedOcrText ?? '',
+        );
+        tSim = evidence.score;
+      } else if (candidate.hasOcrText) {
+        tSim = OcrService.computeTextSimilarity(
+          liveNormalizedText,
+          candidate.normalizedOcrText ?? '',
+        );
+      } else {
+        // If candidate ad has NO text (pure graphic/photo), do not penalize it.
+        // Dynamically assign full weight to visual descriptor.
+        effectiveVWeight = 1.0;
+        effectiveTWeight = 0.0;
+      }
+
+      // 3. Dynamic multi-signal weighting:
+      // When strong distinctive multi-word text evidence is present AND visual signal is plausible (vSim >= 0.10),
+      // allow that creative evidence to substantially increase that campaign's score.
+      // Text alone cannot confirm without visual plausibility (vSim must be >= 0.10).
+      if (evidence.hasDistinctiveEvidence && vSim >= 0.10) {
+        effectiveVWeight = 0.25;
+        effectiveTWeight = 0.75;
+      }
+
+      // 4. Multi-signal additive combined score
+      final combined = (effectiveVWeight * vSim) + (effectiveTWeight * tSim);
+
+      scored.add(MatchResult(
+        target: candidate,
+        similarity: combined,
+        visualSimilarity: vSim,
+        textSimilarity: tSim,
+        distinctiveMatches: evidence.matchedDistinctiveTokens.length,
+        matchedPhrase: evidence.matchedPhrase,
+      ));
+    }
+
+    if (scored.isEmpty) return const [];
+
+    // Sort descending by combined similarity.
+    // Ensure STUDIO NOIR / demo campaign cannot override a matching advertiser campaign.
+    scored.sort((a, b) {
+      final simComp = b.similarity.compareTo(a.similarity);
+      if (simComp != 0) return simComp;
+      final aIsDemo = a.target.id == 'demo_001';
+      final bIsDemo = b.target.id == 'demo_001';
+      if (aIsDemo && !bIsDemo) return 1;
+      if (!aIsDemo && bIsDemo) return -1;
+      return 0;
+    });
+
+    // 5. Wrong-ad protection: Calculate candidate separation margin
+    double margin = 1.0;
+    bool isAmbiguous = false;
+
+    if (scored.length > 1) {
+      margin = scored[0].similarity - scored[1].similarity;
+      // If top candidate is plausible/near threshold, but separation margin is too tight:
+      if (margin < separationMargin && scored[0].similarity >= plausibleThreshold) {
+        isAmbiguous = true;
+      }
+    }
+
+    final top = scored[0];
+    scored[0] = MatchResult(
+      target: top.target,
+      similarity: top.similarity,
+      visualSimilarity: top.visualSimilarity,
+      textSimilarity: top.textSimilarity,
+      isAmbiguous: isAmbiguous,
+      separationMargin: margin,
+      distinctiveMatches: top.distinctiveMatches,
+      matchedPhrase: top.matchedPhrase,
+    );
+
+    return scored;
+  }
+
   /// Finds the best matching AdTarget from a registry of candidates.
   /// Returns null if liveEmbedding is empty (failed quality check) or best similarity < threshold.
-  MatchResult? findBestMatch(List<double> liveEmbedding, List<AdTarget> candidates) {
+  /// Supports both fast visual-only path and multi-signal path when [liveNormalizedText] is provided.
+  MatchResult? findBestMatch(
+    List<double> liveEmbedding,
+    List<AdTarget> candidates, {
+    String liveNormalizedText = '',
+  }) {
     if (liveEmbedding.isEmpty || candidates.isEmpty) {
+      return null;
+    }
+
+    if (liveNormalizedText.trim().isNotEmpty) {
+      final ranked = rankCandidatesMultiSignal(
+        liveEmbedding: liveEmbedding,
+        liveNormalizedText: liveNormalizedText,
+        candidates: candidates,
+      );
+      if (ranked.isNotEmpty && ranked.first.similarity >= threshold) {
+        return ranked.first;
+      }
       return null;
     }
 
@@ -136,7 +302,11 @@ class MatchingEngine {
     }
 
     if (bestTarget != null && bestSimilarity >= threshold) {
-      return MatchResult(target: bestTarget, similarity: bestSimilarity);
+      return MatchResult(
+        target: bestTarget,
+        similarity: bestSimilarity,
+        visualSimilarity: bestSimilarity,
+      );
     }
 
     return null;

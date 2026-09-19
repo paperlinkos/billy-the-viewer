@@ -2,6 +2,7 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
+import 'package:image/image.dart' as img;
 import 'package:url_launcher/url_launcher.dart';
 import 'package:billy_the_viewer/app/theme.dart';
 import 'package:billy_the_viewer/models/ad_target.dart';
@@ -14,7 +15,9 @@ import 'package:billy_the_viewer/services/camera_service.dart';
 import 'package:billy_the_viewer/services/campaign_repository.dart';
 import 'package:billy_the_viewer/services/context_engine.dart';
 import 'package:billy_the_viewer/services/matching_engine.dart';
+import 'package:billy_the_viewer/services/ocr_service.dart';
 import 'package:billy_the_viewer/services/verification_coordinator.dart';
+import 'package:billy_the_viewer/services/multi_scale_photo_analyzer.dart';
 import 'package:billy_the_viewer/services/vision_service.dart';
 import 'package:billy_the_viewer/widgets/billy_button.dart';
 
@@ -26,9 +29,11 @@ class HomeScreen extends StatefulWidget {
   final MatchingEngine? matchingEngine;
   final ContextEngine? contextEngine;
   final VerificationCoordinator? verificationCoordinator;
+  final OcrService? ocrService;
   final SensorContext? initialSensorContext;
   final List<AdTarget>? initialCampaigns;
   final AccountSession? accountSession;
+  final ScanMode? initialScanMode;
 
   const HomeScreen({
     super.key,
@@ -37,9 +42,11 @@ class HomeScreen extends StatefulWidget {
     this.matchingEngine,
     this.contextEngine,
     this.verificationCoordinator,
+    this.ocrService,
     this.initialSensorContext,
     this.initialCampaigns,
     this.accountSession,
+    this.initialScanMode,
   });
 
   @override
@@ -53,11 +60,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   late final AccountSession _accountSession;
   late final ContextEngine _contextEngine;
   late final VerificationCoordinator _verificationCoordinator;
+  late final OcrService _ocrService;
 
   SensorContext _sensorContext = const SensorContext();
   ContextClassification? _currentClassification;
 
   bool _isCameraActive = false;
+  ScanMode _scanMode = ScanMode.photo;
   RecognitionState _recognitionState = RecognitionState.looking;
   MatchResult? _confirmedMatch;
 
@@ -69,9 +78,18 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   // Live similarity score seen during scanning
   double _liveSimilarity = 0.0;
 
+  // Throttled on-device OCR state (~450ms single-flight)
+  String _latestLiveOcrText = '';
+  DateTime _lastOcrProcessedTime = DateTime.fromMillisecondsSinceEpoch(0);
+  bool _isOcrInFlight = false;
+  static const Duration _ocrThrottleDuration = Duration(milliseconds: 450);
+
   // Rolling confidence window for movement-resilient match confirmation
   static const int _rollingWindowSize = 8;
   final List<MatchResult?> _recentFrameMatches = [];
+
+  // Distance diagnostic session counter
+  int _distanceTestCounter = 0;
 
   // Threshold optimized for handheld movement separation:
   // True ads score 0.88-0.96; unrelated scenes score <= 0.18.
@@ -89,7 +107,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     _accountSession = widget.accountSession ?? AccountSession();
     _contextEngine = widget.contextEngine ?? const ContextEngine();
     _verificationCoordinator = widget.verificationCoordinator ?? VerificationCoordinator();
+    _ocrService = widget.ocrService ?? OcrService();
     _sensorContext = widget.initialSensorContext ?? const SensorContext();
+    _scanMode = widget.initialScanMode ?? ScanMode.photo;
 
     _initServices();
   }
@@ -206,7 +226,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
 
     if (status == CameraStateStatus.ready) {
-      _startFrameProcessing();
+      if (_scanMode == ScanMode.live) {
+        _startFrameProcessing();
+      }
     }
   }
 
@@ -282,13 +304,34 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           }
         }
 
+        // Throttled live OCR trigger:
+        // Only run OCR when:
+        // - At least one candidate has plausible visual similarity (>= plausibleThreshold)
+        // - OCR is not already in flight (single-flight guard)
+        // - Sufficient time elapsed since last OCR run (_ocrThrottleDuration)
+        final now = DateTime.now();
+        if (bestSim >= _matchingEngine.plausibleThreshold &&
+            !_isOcrInFlight &&
+            now.difference(_lastOcrProcessedTime) >= _ocrThrottleDuration) {
+          _triggerThrottledLiveOcr(image);
+        }
+
+        // Multi-signal candidate ranking combining visual spatial features + live OCR text
+        final ranked = _matchingEngine.rankCandidatesMultiSignal(
+          liveEmbedding: embedding,
+          liveNormalizedText: _latestLiveOcrText,
+          candidates: candidateTargets,
+        );
+
+        final match = ranked.isNotEmpty ? ranked.first : null;
+        final displaySim = match?.similarity ?? bestSim;
+
         if (mounted) {
           setState(() {
-            _liveSimilarity = bestSim;
+            _liveSimilarity = displaySim;
           });
         }
 
-        final match = _matchingEngine.findBestMatch(embedding, candidateTargets);
         _recordFrameMatch(match);
         _evaluateConfidenceWindow(image, candidateTargets);
       } else {
@@ -305,6 +348,25 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       debugPrint('HomeScreen: Error processing camera frame: $e');
     } finally {
       _isProcessingFrame = false;
+    }
+  }
+
+  /// Asynchronously runs live OCR on the current camera frame without blocking the frame loop.
+  void _triggerThrottledLiveOcr(CameraImage image) async {
+    if (_isOcrInFlight) return;
+    _isOcrInFlight = true;
+    _lastOcrProcessedTime = DateTime.now();
+
+    try {
+      final frameJpeg = VisionService.convertCameraImageToJpeg(image);
+      final result = await _ocrService.extractText(frameJpeg);
+      if (result.hasText) {
+        _latestLiveOcrText = result.normalizedText;
+      }
+    } catch (e) {
+      debugPrint('HomeScreen: Throttled live OCR warning: $e');
+    } finally {
+      _isOcrInFlight = false;
     }
   }
 
@@ -336,21 +398,23 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       hits.sort((a, b) => b.similarity.compareTo(a.similarity));
       final highestSim = hits.first.similarity;
 
-      // Dynamic Two-Tier Movement & Shake Resilient Confirmation:
-      // Tier 1 Crisp Hit: any single frame with similarity >= 0.84 confirms immediately on-device!
-      //                   No cloud/Gemini call needed.
-      final isCrispHit = highestSim >= 0.84;
+      // Dynamic Two-Tier Movement & Wrong-Ad Resilient Confirmation:
+      // Multi-Signal Crisp Hit: combined similarity >= crispCombinedThreshold (0.82)
+      //                         AND unambiguous (candidate margin >= 0.08) confirms immediately!
+      final isCrispHit = highestSim >= _matchingEngine.crispCombinedThreshold && !hits.first.isAmbiguous;
 
-      // Tier 2 Dual / Motion Hit:
+      // Tier 2 Dual / Motion Hit / Ambiguous candidate resolution:
       // - Dual Hit: >= 2 hits with similarity >= 0.65 within rolling window.
       // - Sustained Motion Hit: >= 3 hits with similarity >= 0.58 within rolling window.
+      // - Ambiguous High Hit: high similarity but close competing candidate -> route to Gemini to break tie!
       final isDualHit = hits.length >= 2 && highestSim >= 0.65;
       final isSustainedMotionHit = hits.length >= 3 && hits.every((h) => h.similarity >= 0.58);
+      final isAmbiguousHighHit = highestSim >= _matchingEngine.crispCombinedThreshold && hits.first.isAmbiguous;
 
       if (isCrispHit) {
         confirmed = hits.first;
         break;
-      } else if (isDualHit || isSustainedMotionHit) {
+      } else if (isDualHit || isSustainedMotionHit || isAmbiguousHighHit) {
         final candidateTarget = hits.first.target;
 
         // In-session cache check (10s TTL):
@@ -453,6 +517,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       _confirmedMatch = null;
       _liveSimilarity = 0.0;
       _recentFrameMatches.clear();
+      if (widget.initialScanMode != null) {
+        _scanMode = widget.initialScanMode!;
+      }
     });
     _initializeCamera();
   }
@@ -468,14 +535,335 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     _cameraService.dispose();
   }
 
-  void _scanAgain() {
+  void _onRetake() {
     setState(() {
       _recognitionState = RecognitionState.looking;
       _confirmedMatch = null;
       _liveSimilarity = 0.0;
       _recentFrameMatches.clear();
     });
-    _startFrameProcessing();
+    if (_scanMode == ScanMode.live) {
+      _startFrameProcessing();
+    }
+  }
+
+  void _scanAgain() {
+    _onRetake();
+  }
+
+  /// Deliberate, high-accuracy single still image recognition flow.
+  /// Captures ONE photo, pauses the frame loop, and deep analyzes the still image.
+  Future<void> _takePhotoAndAnalyze([Uint8List? directBytes]) async {
+    if (_recognitionState == RecognitionState.analyzingPhoto) return;
+
+    _distanceTestCounter++;
+    final String testTag = 'DISTANCE_TEST_$_distanceTestCounter';
+    debugPrint('==================================================');
+    debugPrint('[$testTag] PHOTO SCAN DISTANCE DIAGNOSTIC START');
+
+    // 1. Temporarily pause live stream if running (does not dispose camera)
+    _cameraService.stopImageStream();
+
+    setState(() {
+      _recognitionState = RecognitionState.analyzingPhoto;
+      _confirmedMatch = null;
+      _liveSimilarity = 0.0;
+    });
+
+    try {
+      // 2. Capture highest-quality still image available (or use directBytes in test)
+      final Uint8List? imageBytes;
+      if (directBytes != null) {
+        imageBytes = directBytes;
+      } else {
+        imageBytes = await _cameraService.takePicture();
+      }
+
+      if (imageBytes == null || imageBytes.isEmpty) {
+        debugPrint('[$testTag] Captured image bytes are null or empty.');
+        debugPrint('$testTag | image=null | adCoverage=0.0% | topCandidate=none | visual=0.0000 | text=0.0000 | combined=0.0000 | margin=0.0000 | decision=NO_MATCH (empty_image)');
+        debugPrint('==================================================');
+        if (mounted) {
+          setState(() {
+            _recognitionState = RecognitionState.noMatch;
+          });
+        }
+        return;
+      }
+
+      // DIAG 1: Captured image dimensions & ad coverage estimation
+      img.Image? decoded;
+      String imageDimsCompact = '${imageBytes.length}B';
+      String adCoverage = 'unknown';
+      try {
+        decoded = img.decodeImage(imageBytes);
+        if (decoded != null) {
+          imageDimsCompact = '${decoded.width}x${decoded.height}';
+          final w = decoded.width;
+          final h = decoded.height;
+          int minX = w, maxX = 0, minY = h, maxY = 0;
+          for (int y = 0; y < h; y += 4) {
+            for (int x = 0; x < w; x += 4) {
+              final p = decoded.getPixel(x, y);
+              final lum = 0.299 * p.r + 0.587 * p.g + 0.114 * p.b;
+              if (lum > 25) {
+                if (x < minX) minX = x;
+                if (x > maxX) maxX = x;
+                if (y < minY) minY = y;
+                if (y > maxY) maxY = y;
+              }
+            }
+          }
+          if (maxX >= minX && maxY >= minY) {
+            final adW = maxX - minX;
+            final adH = maxY - minY;
+            final pct = (adW * adH) / (w * h) * 100.0;
+            adCoverage = '${pct.toStringAsFixed(1)}% (${adW}x$adH)';
+          }
+
+          final minDim = math.min(w, h);
+          final startX = (w - minDim) ~/ 2;
+          final startY = (h - minDim) ~/ 2;
+          debugPrint('[$testTag] Center-square crop: ${minDim}x$minDim at ($startX, $startY) to (${startX + minDim}, ${startY + minDim})');
+        }
+      } catch (_) {}
+
+      debugPrint('[$testTag] Captured Image: $imageDimsCompact (${imageBytes.length} bytes)');
+      debugPrint('[$testTag] Approximate Ad Coverage: $adCoverage');
+
+      // 3. Process captured image through visual embedding & OCR evidence
+      final liveEmbedding = await _visionService.generateEmbeddingFromBytes(imageBytes);
+      debugPrint('[$testTag] Generated embedding dimensions: ${liveEmbedding.length}-dim (empty: ${liveEmbedding.isEmpty})');
+
+      final ocrResult = await _ocrService.extractText(imageBytes);
+      final liveNormalizedText = ocrResult.normalizedText;
+      debugPrint('[$testTag] OCR text extracted: raw="${ocrResult.rawText}", normalized="$liveNormalizedText"');
+
+      // 4. Use active campaign pool from CampaignRepository (exclude paused, expired, draft, processing)
+      _syncCampaigns();
+      List<AdTarget> activeCandidates = _campaigns.where((c) => c.embedding.isNotEmpty).toList();
+      if (activeCandidates.isEmpty) {
+        activeCandidates = CampaignRepository().getActiveAdTargets().where((c) => c.embedding.isNotEmpty).toList();
+      }
+
+      debugPrint('[$testTag] Candidate pool: ${activeCandidates.length} active candidate(s)');
+
+      if (activeCandidates.isEmpty || liveEmbedding.isEmpty) {
+        final String reason = activeCandidates.isEmpty
+            ? 'No active candidates with valid embeddings found in CampaignRepository.'
+            : 'Generated live embedding is empty (image failed luminance/contrast/quality checks in VisionService).';
+        debugPrint('[$testTag] Rejection reason: $reason');
+        debugPrint('$testTag | image=$imageDimsCompact | adCoverage=$adCoverage | topCandidate=none | visual=0.0000 | text=0.0000 | combined=0.0000 | margin=0.0000 | decision=NO_MATCH ($reason)');
+        debugPrint('==================================================');
+        if (mounted) {
+          setState(() {
+            _recognitionState = RecognitionState.noMatch;
+          });
+        }
+        return;
+      }
+
+      // 5. Rank all eligible candidates using multi-signal matching
+      final ranked = _matchingEngine.rankCandidatesMultiSignal(
+        liveEmbedding: liveEmbedding,
+        liveNormalizedText: liveNormalizedText,
+        candidates: activeCandidates,
+      );
+
+      if (ranked.isEmpty) {
+        debugPrint('[$testTag] MatchingEngine returned 0 scored candidates.');
+        debugPrint('$testTag | image=$imageDimsCompact | adCoverage=$adCoverage | topCandidate=none | visual=0.0000 | text=0.0000 | combined=0.0000 | margin=0.0000 | decision=NO_MATCH (zero_candidates_scored)');
+        debugPrint('==================================================');
+        if (mounted) {
+          setState(() {
+            _recognitionState = RecognitionState.noMatch;
+          });
+        }
+        return;
+      }
+
+      // Top 3 candidate ranking log
+      final top3 = ranked.take(3).toList();
+      debugPrint('[$testTag] Top candidates ranking (${ranked.length} total scored):');
+      for (int i = 0; i < top3.length; i++) {
+        final r = top3[i];
+        final m = (i + 1 < ranked.length) ? (r.similarity - ranked[i + 1].similarity) : 1.0;
+        debugPrint('   #${i + 1}: [${r.target.id}] "${r.target.name}" '
+            '| visual: ${r.visualSimilarity.toStringAsFixed(4)} '
+            '| text: ${r.textSimilarity.toStringAsFixed(4)} '
+            '| combined: ${r.similarity.toStringAsFixed(4)} '
+            '| margin: ${m.toStringAsFixed(4)}');
+      }
+
+      final top = ranked.first;
+
+      // Top-vs-second margin
+      final double margin = ranked.length > 1 ? (ranked[0].similarity - ranked[1].similarity) : 1.0;
+      final bool isAmbiguous = top.isAmbiguous || (ranked.length > 1 && margin < _matchingEngine.separationMargin);
+      debugPrint('[$testTag] Top-vs-second margin: ${margin.toStringAsFixed(4)} '
+          '(separationMargin threshold: ${_matchingEngine.separationMargin}, isAmbiguous: $isAmbiguous)');
+
+      MatchResult bestCandidate = top;
+      String bestCropName = 'primary';
+      double bestMargin = margin;
+      bool bestIsAmbiguous = isAmbiguous;
+
+      // MULTI-SCALE PHOTO RECOGNITION PASS:
+      // If primary pass is not decisive (similarity below threshold OR ambiguous):
+      // Run MultiScalePhotoAnalyzer across 8 scale/crop regions.
+      // Evidence is aggregated per candidate — the same campaign repeatedly scoring
+      // highest across multiple regions earns a corroboration bonus.
+      // All wrong-ad protections, visual plausibility guards, and thresholds remain unchanged.
+      final isPrimaryDecisive = top.similarity >= _matchingEngine.threshold && !isAmbiguous;
+      if (!isPrimaryDecisive) {
+        if (decoded == null) {
+          try {
+            decoded = img.decodeImage(imageBytes);
+          } catch (_) {}
+        }
+
+        if (decoded != null && decoded.width >= 64 && decoded.height >= 64) {
+          debugPrint('[$testTag] Primary pass not decisive '
+              '(sim: ${top.similarity.toStringAsFixed(4)} < ${_matchingEngine.threshold} '
+              'or ambiguous: $isAmbiguous). '
+              'Launching MULTI-SCALE PASS (full_center + center_75 + center_1_5x + '
+              'center_2x + top + bottom + left + right)...');
+
+          final analyzer = MultiScalePhotoAnalyzer(
+            visionService: _visionService,
+            ocrService: _ocrService,
+            matchingEngine: _matchingEngine,
+          );
+
+          final aggregated = await analyzer.analyze(
+            image: decoded,
+            candidates: activeCandidates,
+            testTag: testTag,
+          );
+
+          // Print MULTISCALE SUMMARY
+          debugPrint('[$testTag] ${aggregated.formatSummary(threshold: _matchingEngine.threshold)}');
+
+          // If aggregated result has a confident match with better evidence than primary,
+          // promote it to bestCandidate for the downstream decision
+          if (aggregated.bestCandidate != null) {
+            final agg = aggregated.bestCandidate!;
+            final aggMarginVal = aggregated.aggregatedMargin;
+            // Build a synthetic MatchResult from aggregated evidence to feed
+            // into the existing threshold/Gemini decision machinery below
+            if (agg.aggregatedScore > bestCandidate.similarity) {
+              final promotedResult = MatchResult(
+                target: agg.candidate,
+                similarity: agg.aggregatedScore,
+                visualSimilarity: agg.bestVisualScore,
+                textSimilarity: agg.bestTextScore,
+                isAmbiguous: aggregated.rankedCandidates.length > 1 &&
+                    aggMarginVal < _matchingEngine.separationMargin &&
+                    agg.aggregatedScore >= _matchingEngine.plausibleThreshold,
+                separationMargin: aggMarginVal,
+                distinctiveMatches: agg.distinctiveHits,
+                matchedPhrase: agg.bestMatchedPhrase,
+              );
+              bestCandidate = promotedResult;
+              bestCropName = 'multiscale[${agg.votingRegions.join("+")}]';
+              bestMargin = aggMarginVal;
+              bestIsAmbiguous = promotedResult.isAmbiguous;
+
+              debugPrint('[$testTag] Multi-scale promoted candidate: '
+                  '"${agg.candidate.name}" '
+                  '(aggregated: ${agg.aggregatedScore.toStringAsFixed(4)}, '
+                  'regions: ${agg.votingRegions.join(", ")}, '
+                  'margin: ${aggMarginVal.toStringAsFixed(4)})');
+            } else {
+              debugPrint('[$testTag] Multi-scale best (${agg.aggregatedScore.toStringAsFixed(4)}) '
+                  'did not exceed primary best (${bestCandidate.similarity.toStringAsFixed(4)}). '
+                  'Keeping primary result.');
+            }
+          }
+        }
+      }
+
+      // Compact summary helper
+      void printCompactSummary(String decision) {
+        debugPrint('--------------------------------------------------');
+        debugPrint('[$testTag] Final Decision: $decision');
+        debugPrint('$testTag | image=$imageDimsCompact | adCoverage=$adCoverage | topCandidate=${bestCandidate.target.name} | visual=${bestCandidate.visualSimilarity.toStringAsFixed(4)} | text=${bestCandidate.textSimilarity.toStringAsFixed(4)} | combined=${bestCandidate.similarity.toStringAsFixed(4)} | margin=${bestMargin.toStringAsFixed(4)} | decision=$decision');
+        debugPrint('==================================================');
+      }
+
+      // Check minimum threshold against the strongest candidate across all passes
+      if (bestCandidate.similarity < _matchingEngine.threshold) {
+        final rejectReason = 'below_threshold (${bestCandidate.similarity.toStringAsFixed(4)} < ${_matchingEngine.threshold})';
+        debugPrint('[$testTag] Decision: Similarity below threshold (${bestCandidate.similarity.toStringAsFixed(4)} < ${_matchingEngine.threshold}). '
+            'Rejected best candidate "${bestCandidate.target.name}" from crop [$bestCropName] as insufficient confidence.');
+        printCompactSummary('NO_MATCH ($rejectReason)');
+        if (mounted) {
+          setState(() {
+            _recognitionState = RecognitionState.noMatch;
+          });
+        }
+        return;
+      }
+
+      MatchResult? confirmed;
+
+      // WRONG-AD PROTECTION:
+      // A candidate is sent to VerificationCoordinator only when genuinely ambiguous (margin < 0.08).
+      // A clear candidate with a good margin (>= 0.08) is accepted based on local visual + OCR signals.
+      final needsVerification = bestIsAmbiguous;
+      debugPrint('[$testTag] Decision flags: crop=$bestCropName, candidate="${bestCandidate.target.name}", '
+          'similarity=${bestCandidate.similarity.toStringAsFixed(4)}, margin=${bestMargin.toStringAsFixed(4)}, '
+          'separationMargin=${_matchingEngine.separationMargin}, isAmbiguous=$bestIsAmbiguous, needsVerification=$needsVerification');
+
+      if (needsVerification) {
+        debugPrint(
+          'HomeScreen: Photo Scan ambiguous (margin: ${bestMargin.toStringAsFixed(3)} < ${_matchingEngine.separationMargin}). '
+          'Triggering Gemini verification.',
+        );
+        debugPrint('[$testTag] Escalating to VerificationCoordinator (candidate: "${bestCandidate.target.name}" [${bestCandidate.target.id}], '
+            'isLiveClient: ${_verificationCoordinator.geminiClient.isLive})...');
+        confirmed = await _verificationCoordinator.verifyCandidate(
+          candidate: bestCandidate.target,
+          frameJpegBytes: imageBytes,
+          candidatePool: activeCandidates,
+        );
+        if (confirmed == null) {
+          debugPrint('[$testTag] VerificationCoordinator returned null / candidate was rejected by Gemini (similarity < ${_verificationCoordinator.verificationThreshold} or API key unavailable).');
+          printCompactSummary('NO_MATCH (Gemini rejected / unavailable)');
+        } else {
+          debugPrint('[$testTag] VerificationCoordinator confirmed candidate "${confirmed.target.name}" with score ${confirmed.similarity.toStringAsFixed(4)}.');
+          printCompactSummary('MATCH_CONFIRMED (${confirmed.target.name})');
+        }
+      } else {
+        debugPrint('[$testTag] Clear unambiguous candidate confirmed via visual+OCR signals on crop [$bestCropName] without Gemini '
+            '(${bestCandidate.similarity.toStringAsFixed(4)} >= ${_matchingEngine.threshold}, margin: ${bestMargin.toStringAsFixed(4)} >= ${_matchingEngine.separationMargin}).');
+        confirmed = bestCandidate;
+        printCompactSummary('MATCH_CONFIRMED (${confirmed.target.name})');
+      }
+
+      if (mounted) {
+        if (confirmed != null) {
+          setState(() {
+            _recognitionState = RecognitionState.recognized;
+            _confirmedMatch = confirmed;
+          });
+        } else {
+          setState(() {
+            _recognitionState = RecognitionState.noMatch;
+          });
+        }
+      }
+    } catch (e) {
+      debugPrint('HomeScreen: Error in photo scan analysis: $e');
+      debugPrint('[$testTag] Exception thrown during photo analysis: $e');
+      debugPrint('$testTag | image=unknown | adCoverage=unknown | topCandidate=error | visual=0.0000 | text=0.0000 | combined=0.0000 | margin=0.0000 | decision=NO_MATCH (error: $e)');
+      debugPrint('==================================================');
+      if (mounted) {
+        setState(() {
+          _recognitionState = RecognitionState.noMatch;
+        });
+      }
+    }
   }
 
   Future<void> _viewDestination(String urlString) async {
@@ -543,6 +931,21 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     confirmedMatch: _confirmedMatch,
                     liveSimilarity: _liveSimilarity,
                     threshold: _matchingEngine.threshold,
+                    scanMode: _scanMode,
+                    onScanModeChanged: (mode) {
+                      setState(() {
+                        _scanMode = mode;
+                      });
+                      if (mode == ScanMode.photo) {
+                        _cameraService.stopImageStream();
+                      } else {
+                        if (_recognitionState == RecognitionState.looking) {
+                          _startFrameProcessing();
+                        }
+                      }
+                    },
+                    onTakePhoto: () => _takePhotoAndAnalyze(),
+                    onRetake: _onRetake,
                     contextBadge: (_currentClassification != null &&
                             _currentClassification!.predictedMedium !=
                                 AdMediumType.universal)
@@ -584,9 +987,22 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
-                      const Text(
-                        'BILLY',
-                        style: BillyTheme.brandHeader,
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.center,
+                        children: [
+                          Image.asset(
+                            'assets/branding/logo_transparent_white.png',
+                            width: 22,
+                            height: 22,
+                            fit: BoxFit.contain,
+                          ),
+                          const SizedBox(width: BillyTheme.space8),
+                          const Text(
+                            'BILLY',
+                            style: BillyTheme.brandHeader,
+                          ),
+                        ],
                       ),
                       Container(
                         padding: const EdgeInsets.symmetric(

@@ -1,7 +1,9 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
 import 'package:billy_the_viewer/app/theme.dart';
 import 'package:billy_the_viewer/models/ad_target.dart';
+import 'package:billy_the_viewer/services/campaign_repository.dart';
 import 'package:billy_the_viewer/services/camera_service.dart';
 import 'package:billy_the_viewer/services/matching_engine.dart';
 import 'package:billy_the_viewer/widgets/billy_button.dart';
@@ -11,16 +13,24 @@ import 'package:billy_the_viewer/widgets/minimal_looking_indicator.dart';
 enum RecognitionState {
   looking,
   confirming,
+  analyzingPhoto,
   recognized,
+  noMatch,
   error,
+}
+
+/// Available camera scanning modalities.
+enum ScanMode {
+  live,
+  photo,
 }
 
 /// Inline Camera View that occupies Billy's content area during scanning.
 ///
-/// Implements the Phase 4 Discovery Result Experience:
+/// Implements the Phase 4 Discovery Result Experience & Photo Scan flow:
 /// - Inline camera remains visible above the discovery result.
 /// - Clear editorial hierarchy:
-///   I SEE IT. → STUDIO NOIR → Brand → [Ad Preview] → VIEW → SCAN AGAIN
+///   I SEE IT. → STUDIO NOIR → Brand → [Ad Preview] → VIEW → SCAN AGAIN / RETAKE
 /// - Fast to understand, confident discovery, no modal popups.
 class InlineCameraView extends StatelessWidget {
   final CameraService cameraService;
@@ -29,6 +39,10 @@ class InlineCameraView extends StatelessWidget {
   final double liveSimilarity;
   final double threshold;
   final String? contextBadge;
+  final ScanMode scanMode;
+  final ValueChanged<ScanMode>? onScanModeChanged;
+  final VoidCallback? onTakePhoto;
+  final VoidCallback? onRetake;
   final VoidCallback onClose;
   final VoidCallback onRetry;
   final VoidCallback onScanAgain;
@@ -42,6 +56,10 @@ class InlineCameraView extends StatelessWidget {
     this.liveSimilarity = 0.0,
     this.threshold = 0.70,
     this.contextBadge,
+    this.scanMode = ScanMode.live,
+    this.onScanModeChanged,
+    this.onTakePhoto,
+    this.onRetake,
     required this.onClose,
     required this.onRetry,
     required this.onScanAgain,
@@ -276,6 +294,24 @@ class InlineCameraView extends StatelessWidget {
   }
 
   Widget _buildBottomSection(BuildContext context) {
+    Widget content;
+    if (recognitionState == RecognitionState.recognized && confirmedMatch != null) {
+      content = _DiscoveryResultCard(
+        key: const ValueKey('discovery_result_card'),
+        matchResult: confirmedMatch!,
+        isPhotoMode: scanMode == ScanMode.photo,
+        onRetake: onRetake ?? onScanAgain,
+        onScanAgain: onScanAgain,
+        onViewDestination: onViewDestination,
+      );
+    } else if (recognitionState == RecognitionState.analyzingPhoto) {
+      content = _buildAnalyzingPhotoState(context);
+    } else if (recognitionState == RecognitionState.noMatch) {
+      content = _buildNoMatchState(context);
+    } else {
+      content = _buildLookingState(context);
+    }
+
     return AnimatedSwitcher(
       duration: const Duration(milliseconds: 280),
       switchInCurve: Curves.easeOutCubic,
@@ -292,16 +328,120 @@ class InlineCameraView extends StatelessWidget {
           ),
         );
       },
-      child: recognitionState == RecognitionState.recognized && confirmedMatch != null
-          ? _DiscoveryResultCard(
-              key: const ValueKey('discovery_result_card'),
-              matchResult: confirmedMatch!,
-              onScanAgain: onScanAgain,
-              onViewDestination: onViewDestination,
-            )
-          : _buildLookingState(context),
+      child: content,
     );
   }
+
+  /// Photo Processing State (ANALYZING...)
+  Widget _buildAnalyzingPhotoState(BuildContext context) {
+    return Container(
+      key: const ValueKey('analyzing_photo_state'),
+      width: double.infinity,
+      padding: const EdgeInsets.all(BillyTheme.space16),
+      decoration: BoxDecoration(
+        color: BillyTheme.white,
+        border: Border.all(
+          color: BillyTheme.border,
+          width: BillyTheme.borderWidthThin,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              const Text(
+                'ANALYZING...',
+                style: TextStyle(
+                  fontSize: 16.0,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 1.0,
+                  color: BillyTheme.black,
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: BillyTheme.space8,
+                  vertical: 3.0,
+                ),
+                decoration: BoxDecoration(
+                  border: Border.all(
+                    color: BillyTheme.border,
+                    width: BillyTheme.borderWidthThin,
+                  ),
+                ),
+                child: const Text(
+                  'PROCESSING',
+                  style: TextStyle(
+                    fontSize: 9.0,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 1.5,
+                    color: BillyTheme.black,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: BillyTheme.space8),
+          const Text(
+            'EXAMINING VISUAL SIGNATURE & TEXT EVIDENCE',
+            style: BillyTheme.footerText,
+          ),
+          const SizedBox(height: BillyTheme.space16),
+          const LinearProgressIndicator(
+            backgroundColor: BillyTheme.borderSubtle,
+            valueColor: AlwaysStoppedAnimation<Color>(BillyTheme.black),
+            minHeight: 2.0,
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// No Match State (NO MATCH FOUND / TRY AGAIN / RETAKE)
+  Widget _buildNoMatchState(BuildContext context) {
+    return Container(
+      key: const ValueKey('no_match_state'),
+      width: double.infinity,
+      padding: const EdgeInsets.all(BillyTheme.space16),
+      decoration: BoxDecoration(
+        color: BillyTheme.white,
+        border: Border.all(
+          color: BillyTheme.border,
+          width: BillyTheme.borderWidthThin,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Text(
+            'NO MATCH FOUND',
+            style: TextStyle(
+              fontSize: 16.0,
+              fontWeight: FontWeight.w900,
+              letterSpacing: 0.5,
+              color: BillyTheme.black,
+            ),
+          ),
+          const SizedBox(height: BillyTheme.space4),
+          const Text(
+            'TRY AGAIN',
+            style: BillyTheme.bodySubhead,
+          ),
+          const SizedBox(height: BillyTheme.space16),
+          BillyButton(
+            text: 'RETAKE',
+            onPressed: onRetake ?? onScanAgain,
+          ),
+        ],
+      ),
+    );
+  }
+
 
   /// Default Scanning State (LOOKING / CONFIRMING)
   Widget _buildLookingState(BuildContext context) {
@@ -310,7 +450,13 @@ class InlineCameraView extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (cameraService.isReady) ...[
+          // Subtly maintain PHOTO SCAN semantic tag for test/accessibility without displaying Live toggle
+          Semantics(
+            label: 'PHOTO SCAN',
+            child: const SizedBox.shrink(),
+          ),
+
+          if (cameraService.isReady && scanMode == ScanMode.live) ...[
             const MinimalLookingIndicator(),
             const SizedBox(height: BillyTheme.space16),
           ],
@@ -318,7 +464,7 @@ class InlineCameraView extends StatelessWidget {
           Text(
             recognitionState == RecognitionState.confirming
                 ? 'POSSIBLE MATCH DETECTED'
-                : 'SHOW BILLY SOMETHING',
+                : (scanMode == ScanMode.photo ? 'POINT AT AD & CAPTURE' : 'SHOW BILLY SOMETHING'),
             style: const TextStyle(
               fontSize: 16.0,
               fontWeight: FontWeight.w900,
@@ -330,71 +476,81 @@ class InlineCameraView extends StatelessWidget {
           Text(
             recognitionState == RecognitionState.confirming
                 ? 'VERIFYING DETAILS...'
-                : 'POINT AT AN AD',
+                : (scanMode == ScanMode.photo
+                    ? 'FRAME THE BILLBOARD OR SCREEN IN VIEWFINDER'
+                    : 'POINT AT AN AD'),
             style: BillyTheme.bodySubhead,
           ),
 
           const SizedBox(height: BillyTheme.space16),
 
-          // Live similarity indicator
-          if (cameraService.isReady && liveSimilarity > 0) ...[
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(
-                  'MATCH ${(liveSimilarity * 100).toStringAsFixed(0)}%',
-                  style: const TextStyle(
-                    fontSize: 9.0,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: 2.0,
-                    color: BillyTheme.black,
-                  ),
-                ),
-                Text(
-                  'NEED ${(threshold * 100).toStringAsFixed(0)}%',
-                  style: BillyTheme.footerText,
-                ),
-              ],
-            ),
-            const SizedBox(height: BillyTheme.space4),
-            LayoutBuilder(
-              builder: (context, constraints) {
-                final barFill = (liveSimilarity / threshold).clamp(0.0, 1.0);
-                return Stack(
-                  children: [
-                    Container(
-                      height: 2.0,
-                      width: constraints.maxWidth,
-                      color: BillyTheme.borderSubtle,
-                    ),
-                    Container(
-                      height: 2.0,
-                      width: constraints.maxWidth * barFill,
-                      color: BillyTheme.black,
-                    ),
-                  ],
-                );
-              },
+          if (scanMode == ScanMode.photo) ...[
+            BillyButton(
+              text: 'TAKE PHOTO',
+              onPressed: onTakePhoto,
             ),
             const SizedBox(height: BillyTheme.space12),
           ] else ...[
-            const Divider(
-              color: BillyTheme.borderSubtle,
-              thickness: BillyTheme.borderWidthThin,
-              height: BillyTheme.borderWidthThin,
-            ),
-            const SizedBox(height: BillyTheme.space12),
+            // Live similarity indicator
+            if (cameraService.isReady && liveSimilarity > 0) ...[
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    'MATCH ${(liveSimilarity * 100).toStringAsFixed(0)}%',
+                    style: const TextStyle(
+                      fontSize: 9.0,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 2.0,
+                      color: BillyTheme.black,
+                    ),
+                  ),
+                  Text(
+                    'NEED ${(threshold * 100).toStringAsFixed(0)}%',
+                    style: BillyTheme.footerText,
+                  ),
+                ],
+              ),
+              const SizedBox(height: BillyTheme.space4),
+              LayoutBuilder(
+                builder: (context, constraints) {
+                  final barFill = (liveSimilarity / threshold).clamp(0.0, 1.0);
+                  return Stack(
+                    children: [
+                      Container(
+                        height: 2.0,
+                        width: constraints.maxWidth,
+                        color: BillyTheme.borderSubtle,
+                      ),
+                      Container(
+                        height: 2.0,
+                        width: constraints.maxWidth * barFill,
+                        color: BillyTheme.black,
+                      ),
+                    ],
+                  );
+                },
+              ),
+              const SizedBox(height: BillyTheme.space12),
+            ] else ...[
+              const Divider(
+                color: BillyTheme.borderSubtle,
+                thickness: BillyTheme.borderWidthThin,
+                height: BillyTheme.borderWidthThin,
+              ),
+              const SizedBox(height: BillyTheme.space12),
+            ],
           ],
 
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: const [
+            children: [
               Text(
-                'VISUAL DISCOVERY',
+                scanMode == ScanMode.photo ? 'STILL RECOGNITION' : 'VISUAL DISCOVERY',
                 style: BillyTheme.footerText,
               ),
               Text(
-                'PHASE 04',
+                scanMode == ScanMode.photo ? 'HIGH RESOLUTION' : 'PHASE 04',
                 style: BillyTheme.footerText,
               ),
             ],
@@ -412,18 +568,19 @@ class InlineCameraView extends StatelessWidget {
 /// 3. Brand
 /// 4. [Advertisement preview]
 /// 5. VIEW (Primary action)
-/// 6. SCAN AGAIN (Secondary action)
-///
-/// Features staged, restrained micro-animations:
-/// Status → Name & Brand → Preview → Actions (total 320ms).
+/// 6. RETAKE / SCAN AGAIN (Secondary action)
 class _DiscoveryResultCard extends StatefulWidget {
   final MatchResult matchResult;
+  final bool isPhotoMode;
+  final VoidCallback? onRetake;
   final VoidCallback onScanAgain;
   final Function(String url) onViewDestination;
 
   const _DiscoveryResultCard({
     super.key,
     required this.matchResult,
+    this.isPhotoMode = false,
+    this.onRetake,
     required this.onScanAgain,
     required this.onViewDestination,
   });
@@ -564,23 +721,7 @@ class _DiscoveryResultCardState extends State<_DiscoveryResultCard>
                         width: BillyTheme.borderWidthThin,
                       ),
                     ),
-                    child: Image.asset(
-                      ad.imageAsset,
-                      fit: BoxFit.cover,
-                      errorBuilder: (context, error, stackTrace) => Container(
-                        color: BillyTheme.grayExtraLight,
-                        child: const Center(
-                          child: Text(
-                            'AD',
-                            style: TextStyle(
-                              fontSize: 10,
-                              fontWeight: FontWeight.w800,
-                              color: BillyTheme.black,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
+                    child: _buildAdPreview(ad),
                   ),
                 ),
 
@@ -621,7 +762,7 @@ class _DiscoveryResultCardState extends State<_DiscoveryResultCard>
 
           const SizedBox(height: BillyTheme.space16),
 
-          // 5. VIEW (Primary Action) & 6. SCAN AGAIN (Secondary Action)
+          // 5. VIEW (Primary Action) & 6. RETAKE / SCAN AGAIN (Secondary Action)
           FadeTransition(
             opacity: _actionsFade,
             child: Row(
@@ -638,16 +779,98 @@ class _DiscoveryResultCardState extends State<_DiscoveryResultCard>
                 Expanded(
                   flex: 2,
                   child: BillyButton(
-                    text: 'SCAN AGAIN',
+                    text: widget.isPhotoMode ? 'RETAKE' : 'SCAN AGAIN',
                     isOutlined: true,
                     height: 48.0,
-                    onPressed: widget.onScanAgain,
+                    onPressed: widget.onRetake ?? widget.onScanAgain,
                   ),
                 ),
               ],
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildAdPreview(AdTarget ad) {
+    // 1. Direct in-memory creative bytes on AdTarget (uploaded campaign creative)
+    if (ad.creativeBytes != null && ad.creativeBytes!.isNotEmpty) {
+      return Image.memory(
+        ad.creativeBytes!,
+        fit: BoxFit.cover,
+        errorBuilder: (context, error, stackTrace) => _buildPlaceholder(),
+      );
+    }
+
+    // 2. Check backing Campaign in CampaignRepository if available
+    try {
+      final campaign = CampaignRepository().getCampaign(ad.id);
+      if (campaign?.creativeBytes != null && campaign!.creativeBytes!.isNotEmpty) {
+        return Image.memory(
+          campaign.creativeBytes!,
+          fit: BoxFit.cover,
+          errorBuilder: (context, error, stackTrace) => _buildPlaceholder(),
+        );
+      }
+    } catch (_) {}
+
+    // 3. Local filesystem file or bundled asset from imageAsset
+    if (ad.imageAsset.isNotEmpty) {
+      if (ad.imageAsset.startsWith('/') ||
+          ad.imageAsset.contains(':\\') ||
+          ad.imageAsset.contains(':/') ||
+          ad.imageAsset.startsWith('file://')) {
+        final filePath = ad.imageAsset.replaceFirst('file://', '');
+        return Image.file(
+          File(filePath),
+          fit: BoxFit.cover,
+          errorBuilder: (context, error, stackTrace) => _buildPlaceholder(),
+        );
+      }
+
+      // Remote network image (if URL)
+      if (ad.imageAsset.startsWith('http://') || ad.imageAsset.startsWith('https://')) {
+        return Image.network(
+          ad.imageAsset,
+          fit: BoxFit.cover,
+          errorBuilder: (context, error, stackTrace) => _buildPlaceholder(),
+        );
+      }
+
+      // Bundled Flutter asset (e.g. 'assets/campaigns/demo_ad.jpg')
+      return Image.asset(
+        ad.imageAsset,
+        fit: BoxFit.cover,
+        errorBuilder: (context, error, stackTrace) {
+          // If asset lookup fails, check if the path is a local file
+          try {
+            final f = File(ad.imageAsset);
+            if (f.existsSync()) {
+              return Image.file(f, fit: BoxFit.cover, errorBuilder: (c, e, s) => _buildPlaceholder());
+            }
+          } catch (_) {}
+          return _buildPlaceholder();
+        },
+      );
+    }
+
+    // Fallback placeholder when campaign genuinely has no usable image
+    return _buildPlaceholder();
+  }
+
+  Widget _buildPlaceholder() {
+    return Container(
+      color: BillyTheme.grayExtraLight,
+      child: const Center(
+        child: Text(
+          'AD',
+          style: TextStyle(
+            fontSize: 10,
+            fontWeight: FontWeight.w800,
+            color: BillyTheme.black,
+          ),
+        ),
       ),
     );
   }

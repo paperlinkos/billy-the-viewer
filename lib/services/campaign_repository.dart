@@ -4,6 +4,7 @@ import '../models/ad_target.dart';
 import '../models/campaign.dart';
 import '../models/recognition_signature.dart';
 import 'signature_service.dart';
+import 'supabase/supabase_service.dart';
 
 import 'context_engine.dart';
 
@@ -105,6 +106,39 @@ class CampaignRepository {
     } catch (e) {
       debugPrint('CampaignRepository: Could not load demo campaign creative: $e');
       _isInitialized = true;
+    }
+  }
+
+  /// Synchronizes active recognition campaigns from remote Supabase backend.
+  ///
+  /// Safe integration rules:
+  /// - Skips duplicates and replaces outdated remote definitions.
+  /// - Baseline demo campaigns (e.g. STUDIO NOIR) are preserved.
+  /// - Non-fatal: If offline or remote call fails, existing local campaigns are retained.
+  Future<int> syncRemoteCampaigns({ISupabaseCampaignService? supabaseService}) async {
+    final service = supabaseService ?? SupabaseService();
+    try {
+      final remoteList = await service.fetchActiveRecognitionCampaigns();
+      int addedOrUpdated = 0;
+
+      for (final remoteCampaign in remoteList) {
+        // Never overwrite protected system demo with a remote copy
+        if (remoteCampaign.id == systemDemoCampaignId) continue;
+
+        final existingIdx = _campaigns.indexWhere((c) => c.id == remoteCampaign.id);
+        if (existingIdx != -1) {
+          _campaigns[existingIdx] = remoteCampaign;
+        } else {
+          _campaigns.add(remoteCampaign);
+        }
+        addedOrUpdated++;
+      }
+
+      debugPrint('CampaignRepository: Successfully synchronized $addedOrUpdated campaign(s) from Supabase.');
+      return addedOrUpdated;
+    } catch (e) {
+      debugPrint('CampaignRepository: Remote sync warning (retaining offline cache): $e');
+      return 0;
     }
   }
 

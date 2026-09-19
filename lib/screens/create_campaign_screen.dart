@@ -7,6 +7,7 @@ import '../models/campaign.dart';
 import '../services/account_session.dart';
 import '../services/campaign_repository.dart';
 import '../services/signature_service.dart';
+import '../services/supabase/supabase_service.dart';
 import '../widgets/billy_button.dart';
 import 'account_screen.dart';
 import 'campaign_list_screen.dart';
@@ -21,6 +22,7 @@ class CreateCampaignScreen extends StatefulWidget {
   final SignatureService? signatureService;
   final CampaignRepository? campaignRepository;
   final AccountSession? accountSession;
+  final ISupabaseAdvertiserService? supabaseService;
   final Uint8List? initialCreativeBytes;
   final String? ownerAccountId;
 
@@ -29,6 +31,7 @@ class CreateCampaignScreen extends StatefulWidget {
     this.signatureService,
     this.campaignRepository,
     this.accountSession,
+    this.supabaseService,
     this.initialCreativeBytes,
     this.ownerAccountId,
   });
@@ -51,6 +54,7 @@ class _CreateCampaignScreenState extends State<CreateCampaignScreen> {
   late final SignatureService _signatureService;
   late final CampaignRepository _campaignRepository;
   late final AccountSession _accountSession;
+  late final ISupabaseAdvertiserService _supabaseService;
 
   Uint8List? _creativeBytes;
   String? _creativePath;
@@ -69,6 +73,7 @@ class _CreateCampaignScreenState extends State<CreateCampaignScreen> {
     _accountSession = widget.accountSession ?? AccountSession();
     _signatureService = widget.signatureService ?? SignatureService();
     _campaignRepository = widget.campaignRepository ?? CampaignRepository();
+    _supabaseService = widget.supabaseService ?? SupabaseService();
     if (widget.initialCreativeBytes != null) {
       _creativeBytes = widget.initialCreativeBytes;
     }
@@ -196,7 +201,7 @@ class _CreateCampaignScreenState extends State<CreateCampaignScreen> {
         _processingStageText = 'CREATING RECOGNITION SIGNATURE...';
       });
 
-      // Signature generation using real SignatureService
+      // Signature generation using real SignatureService (100% on-device)
       final signature = await _signatureService.generateSignature(_creativeBytes!);
 
       // Packaging into active campaign
@@ -205,7 +210,7 @@ class _CreateCampaignScreenState extends State<CreateCampaignScreen> {
           _accountSession.currentAccount?.id ??
           'system-demo-owner';
 
-      final campaign = Campaign(
+      Campaign campaign = Campaign(
         id: campaignId,
         ownerAccountId: resolvedOwnerId,
         adName: _adNameController.text.trim().toUpperCase(),
@@ -222,6 +227,44 @@ class _CreateCampaignScreenState extends State<CreateCampaignScreen> {
         signatureVersion: signature.version,
       );
 
+      // Check if user has an authorized Supabase advertiser profile to publish remotely
+      final advertiserProfile = _accountSession.advertiserProfile;
+      if (advertiserProfile != null && advertiserProfile.id.isNotEmpty) {
+        if (!mounted) return;
+        setState(() {
+          _processingStageText = 'PUBLISHING TO AD NETWORK...';
+        });
+
+        // Determine file extension
+        String fileExt = 'jpg';
+        if (_creativePath != null && _creativePath!.contains('.')) {
+          fileExt = _creativePath!.split('.').last.toLowerCase();
+        }
+
+        try {
+          final publishedCampaign = await _supabaseService.publishCampaign(
+            campaign: campaign,
+            advertiserId: advertiserProfile.id,
+            creativeBytes: _creativeBytes!,
+            signature: signature,
+            fileExtension: fileExt,
+          );
+          campaign = publishedCampaign;
+        } catch (publishErr) {
+          debugPrint('CreateCampaignScreen: Remote publish failed: $publishErr');
+          // If Supabase publishing fails, report the failure clearly and do not crash
+          if (!mounted) return;
+          setState(() {
+            _currentStatus = CampaignStatus.processing;
+            _errorMessage = 'REMOTE PUBLISH FAILED: $publishErr\n(Ad was not published to the cloud)';
+          });
+          return;
+        }
+      }
+
+      // Local Recognition Immediacy:
+      // Newly created campaign must be immediately added to CampaignRepository
+      // so HomeScreen, InlineCameraView, and activeAdTargets match it locally with 0ms delay.
       _campaignRepository.addCampaign(campaign);
 
       if (!mounted) return;

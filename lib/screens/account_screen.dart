@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart' show AuthException;
 import '../app/theme.dart';
 import '../models/account.dart';
 import '../services/account_session.dart';
+import '../services/supabase/supabase_service.dart';
 import '../widgets/billy_button.dart';
+import 'advertiser_onboarding_screen.dart';
 import 'campaign_list_screen.dart';
 import 'create_campaign_screen.dart';
 import 'rewards_screen.dart';
@@ -111,6 +114,13 @@ class _AccountScreenState extends State<AccountScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        Image.asset(
+          'assets/branding/logo_transparent_black.png',
+          width: 48,
+          height: 48,
+          fit: BoxFit.contain,
+        ),
+        const SizedBox(height: BillyTheme.space24),
         const Text(
           'WELCOME TO BILLY',
           style: TextStyle(
@@ -149,11 +159,7 @@ class _AccountScreenState extends State<AccountScreen> {
           text: 'I RUN ADS',
           isOutlined: true,
           height: 54.0,
-          onPressed: () {
-            setState(() {
-              _accountSession.signInAsAdvertiser();
-            });
-          },
+          onPressed: _handleAdvertiserFlow,
         ),
 
         const SizedBox(height: BillyTheme.space48),
@@ -437,6 +443,283 @@ class _AccountScreenState extends State<AccountScreen> {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  // ===========================================================================
+  // PHASE 2 — ADVERTISER AUTH & ONBOARDING ROUTING
+  // ===========================================================================
+
+  Future<void> _handleAdvertiserFlow() async {
+    final supabase = SupabaseService();
+
+    // In widget test environments or when Supabase client is uninitialized,
+    // gracefully fall back to local advertiser session immediately.
+    bool hasLiveSupabase = false;
+    try {
+      hasLiveSupabase = supabase.isInitialized;
+    } catch (_) {
+      hasLiveSupabase = false;
+    }
+
+    if (!hasLiveSupabase) {
+      setState(() {
+        _accountSession.signInAsAdvertiser();
+      });
+      return;
+    }
+
+    // 1. If not authenticated with Supabase, present clean login/sign-up dialog
+    if (!supabase.isAuthenticated) {
+      final success = await _showAdvertiserAuthDialog(context);
+      if (success != true || !mounted) return;
+    }
+
+    // 2. Check if advertiser profile already exists for the authenticated user
+    try {
+      final existingProfile = await supabase.getAdvertiserProfile();
+
+      if (existingProfile != null) {
+        // Profile exists: attach to session and open advertiser dashboard
+        final user = supabase.client.auth.currentUser;
+        final account = Account(
+          id: user?.id ?? existingProfile.createdBy,
+          email: user?.email ?? existingProfile.contactEmail,
+          displayName: existingProfile.displayName,
+          role: AccountRole.advertiser,
+          createdAt: existingProfile.createdAt ?? DateTime.now(),
+          advertiserProfile: existingProfile,
+        );
+
+        setState(() {
+          _accountSession.signIn(account);
+        });
+      } else {
+        // Profile missing: route to AdvertiserOnboardingScreen
+        if (!mounted) return;
+        await Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => AdvertiserOnboardingScreen(
+              supabaseService: supabase,
+              accountSession: _accountSession,
+              onOnboardingComplete: () {
+                Navigator.of(context).pop();
+                setState(() {});
+              },
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      // Offline / network failure fallback: allow session continuation with diagnostic warning
+      debugPrint('AccountScreen: Profile check failed (offline/network): $e');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('ADVERTISER SYNC NOTICE: $e'),
+          backgroundColor: BillyTheme.black,
+        ),
+      );
+      setState(() {
+        _accountSession.signInAsAdvertiser();
+      });
+    }
+  }
+
+  Future<bool?> _showAdvertiserAuthDialog(BuildContext context) {
+    final emailController = TextEditingController();
+    final passwordController = TextEditingController();
+    bool isSignUp = false;
+    bool isLoading = false;
+    String? dialogError;
+
+    return showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogCtx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          backgroundColor: BillyTheme.background,
+          shape: const RoundedRectangleBorder(
+            side: BorderSide(color: BillyTheme.black, width: BillyTheme.borderWidthBold),
+          ),
+          title: Text(
+            isSignUp ? 'CREATE ADVERTISER ACCOUNT' : 'ADVERTISER SIGN IN',
+            style: const TextStyle(
+              fontSize: 16.0,
+              fontWeight: FontWeight.w900,
+              letterSpacing: 1.5,
+              color: BillyTheme.textPrimary,
+            ),
+          ),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'SIGN IN TO MANAGE CAMPAIGNS & ASSETS.',
+                  style: TextStyle(
+                    fontSize: 10.0,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 1.5,
+                    color: BillyTheme.textSecondary,
+                  ),
+                ),
+                const SizedBox(height: BillyTheme.space16),
+                const Text(
+                  'EMAIL',
+                  style: TextStyle(
+                    fontSize: 10.0,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 1.5,
+                    color: BillyTheme.textSecondary,
+                  ),
+                ),
+                const SizedBox(height: BillyTheme.space4),
+                TextField(
+                  controller: emailController,
+                  keyboardType: TextInputType.emailAddress,
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                  decoration: const InputDecoration(
+                    hintText: 'advertiser@brand.com',
+                    filled: true,
+                    fillColor: BillyTheme.surface,
+                    contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                    border: OutlineInputBorder(borderRadius: BorderRadius.zero),
+                  ),
+                ),
+                const SizedBox(height: BillyTheme.space12),
+                const Text(
+                  'PASSWORD',
+                  style: TextStyle(
+                    fontSize: 10.0,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 1.5,
+                    color: BillyTheme.textSecondary,
+                  ),
+                ),
+                const SizedBox(height: BillyTheme.space4),
+                TextField(
+                  controller: passwordController,
+                  obscureText: true,
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                  decoration: const InputDecoration(
+                    hintText: '••••••••',
+                    filled: true,
+                    fillColor: BillyTheme.surface,
+                    contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                    border: OutlineInputBorder(borderRadius: BorderRadius.zero),
+                  ),
+                ),
+                if (dialogError != null) ...[
+                  const SizedBox(height: BillyTheme.space12),
+                  Text(
+                    dialogError!,
+                    style: TextStyle(
+                      fontSize: 10.0,
+                      fontWeight: FontWeight.w700,
+                      color: Colors.red.shade800,
+                    ),
+                  ),
+                ],
+                const SizedBox(height: BillyTheme.space16),
+                GestureDetector(
+                  onTap: () {
+                    setDialogState(() {
+                      isSignUp = !isSignUp;
+                      dialogError = null;
+                    });
+                  },
+                  child: Text(
+                    isSignUp
+                        ? 'ALREADY HAVE AN ACCOUNT? SIGN IN'
+                        : 'NEW ADVERTISER? CREATE ACCOUNT',
+                    style: const TextStyle(
+                      fontSize: 10.0,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 1.0,
+                      decoration: TextDecoration.underline,
+                      color: BillyTheme.black,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: isLoading ? null : () => Navigator.of(dialogCtx).pop(false),
+              child: const Text(
+                'CANCEL',
+                style: TextStyle(
+                  fontWeight: FontWeight.w700,
+                  color: BillyTheme.textSecondary,
+                ),
+              ),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: BillyTheme.black,
+                foregroundColor: BillyTheme.white,
+                shape: const RoundedRectangleBorder(borderRadius: BorderRadius.zero),
+              ),
+              onPressed: isLoading
+                  ? null
+                  : () async {
+                      final email = emailController.text.trim();
+                      final password = passwordController.text;
+
+                      if (email.isEmpty || !email.contains('@') || password.isEmpty) {
+                        setDialogState(() {
+                          dialogError = 'ENTER A VALID EMAIL AND PASSWORD.';
+                        });
+                        return;
+                      }
+
+                      setDialogState(() {
+                        isLoading = true;
+                        dialogError = null;
+                      });
+
+                      try {
+                        final supabase = SupabaseService();
+                        if (isSignUp) {
+                          await supabase.client.auth.signUp(
+                            email: email,
+                            password: password,
+                          );
+                        } else {
+                          await supabase.client.auth.signInWithPassword(
+                            email: email,
+                            password: password,
+                          );
+                        }
+                        if (dialogCtx.mounted) {
+                          Navigator.of(dialogCtx).pop(true);
+                        }
+                      } on AuthException catch (e) {
+                        setDialogState(() {
+                          dialogError = e.message.toUpperCase();
+                          isLoading = false;
+                        });
+                      } catch (e) {
+                        setDialogState(() {
+                          dialogError = 'AUTH FAILED: $e';
+                          isLoading = false;
+                        });
+                      }
+                    },
+              child: Text(
+                isLoading ? 'WAIT...' : (isSignUp ? 'SIGN UP' : 'SIGN IN'),
+                style: const TextStyle(
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 1.5,
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
